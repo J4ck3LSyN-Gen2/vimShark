@@ -74,19 +74,19 @@ vimShark requires Python 3.8+ and administrative privileges to bind to raw socke
 ### Basic Sniffing
 Capture traffic on the default interface (usually `eth0` or `wlan0`):
 ```bash
-sudo python3 vs004.py -i eth0
+sudo python3 vs.py -i eth0
 ```
 
 ### Offline Analysis
 Analyze a pre-captured PCAP file:
 ```bash
-python3 vs004.py -r capture.pcap
+python3 vs.py -r capture.pcap
 ```
 
 ### Live Export
 Capture live traffic and mirror the stream to a file simultaneously:
 ```bash
-sudo python3 vs004.py -i eth0 -o output.pcap
+sudo python3 vs.py -i eth0 -o output.pcap
 ```
 
 ## ⌨️ Interactive Keybindings
