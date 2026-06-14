@@ -72,7 +72,7 @@ try:
 except Exception:
     SCAPY_AVAILABLE = False
 
-__version__ = "0.3.0"
+__version__ = "0.2.2"
 __author__ = "J4ck3LSyN"
 
 # ==============================================================================
