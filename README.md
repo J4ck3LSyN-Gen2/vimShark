@@ -55,9 +55,9 @@ vimShark requires Python 3.8+ and administrative privileges to bind to raw socke
     > *Note: Depending on your OS, you may need to install `tcpdump` or `libpcap` for Scapy to interface correctly with your network hardware*
     ```bash
     python3 -m pip install --upgrade pip
-    python3 -m pip install urwid dpkt pcapy-ng
+    python3 -m pip install -t . dpkt pcapy-ng
+    python3 -m pip install urwid scapy 
     # Optional: pip install cryptography (for cert parsing) scapy (for active probe fallback)
-    # Note: Use -t . if you have environment issues with sudo/venv
     ```
 4. **Run vimShark**
     ```bash
