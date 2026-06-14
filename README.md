@@ -118,12 +118,13 @@ vimShark supports a powerful filtering syntax to isolate specific traffic. You c
 ## 'T' Supported Themes
 
 Change the aesthetic of your analysis environment on the fly:
-*   **btop_classic**: High-contrast professional blue.
-*   **Dracula**: The classic dark mode favorite.
-*   **Nord**: Arctic-inspired clean aesthetic.
-*   **Gruvbox**: Retro "groove" dark theme.
-*   **Cyberpunk**: High-saturation neon visuals.
-*   **Solarized Dark**: Precision-calibrated color palette.
+*   **arch_yuki**: Soft pastel cyber-fantasy inspired by the director of CFSD and close friend.
+*   **neon_sakura**: Vibrant neon pink/cyan cyber aesthetic.
+*   **vapor_noir**: Ethereal vaporwave-inspired dark palette.
+*   **btop_classic**: High-contrast professional blue (inspired by btop++).
+*   **gruvbox_dark**: Warm, retro gruvbox dark theme.
+*   **dracula**: The classic dark mode favorite.
+*   **cyberpunk**: High-saturation green/magenta cyberpunk vibe.
 
 ## Security Disclaimer
 
