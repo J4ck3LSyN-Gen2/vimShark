@@ -1,3 +1,6 @@
+cffi==2.0.0
+cryptography==49.0.0
+pycparser==3.0
 scapy==2.7.0
-urwid==4.0.1
-wcwidth==0.7.0
+urwid==4.0.2
+wcwidth==0.8.1
