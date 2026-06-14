@@ -1,7 +1,7 @@
 # 🦈 vimShark
 
 **Author:** J4ck3LSyN  
-**Version:** 0.2.0
+**Version:** 0.2.1
 
 ---
 
