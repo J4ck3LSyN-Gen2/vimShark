@@ -349,14 +349,13 @@ class PacketStore:
         with self._lock:
             return len(self._order)
 
-
 # ==============================================================================
-# UPGRADED DISSECTION ENGINE (v0.3)
+# UPGRADED DISSECTION ENGINE (v0.4 - Enhanced TLS + JA3)
 # ==============================================================================
 
 class FastDissector:
-    """High-performance, multi-protocol packet dissector with enhanced
-    readability, TLS certificate parsing, and basic pinning detection."""
+    """High-performance, multi-protocol packet dissector with robust TLS
+    parsing, JA3 fingerprinting, enhanced certificate details, and credential detection."""
 
     _CRED_PATTERNS: List[Tuple[re.Pattern, str]] = [
         (re.compile(rb'(?i)authorization:\s*basic\s+\S+'), 'HTTP Basic Auth'),
@@ -370,7 +369,7 @@ class FastDissector:
 
     @staticmethod
     def _scan_credentials(data: bytes) -> List[str]:
-        if not data or len(data) > 8192:  # limit scan size
+        if not data or len(data) > 8192:
             return []
         findings: List[str] = []
         for pattern, label in FastDissector._CRED_PATTERNS:
@@ -392,31 +391,35 @@ class FastDissector:
 
     @staticmethod
     def _safe_str(val: Any, max_len: int = 120) -> str:
-        """Convert any field value to a clean, readable string with improved decoding."""
+        """Convert any field value to a clean, readable string."""
         if val is None:
             return "None"
         if hasattr(val, '__class__') and val.__class__.__module__.startswith('dpkt') and not isinstance(val, (bytes, bytearray)):
             return f"<{val.__class__.__name__} object>"
+
         if isinstance(val, (bytes, bytearray)):
-            if len(val) == 6:  # MAC
+            if len(val) == 6:   # MAC
                 return mac_to_str(val)
-            if len(val) == 4:  # likely IPv4 (replace legacy ntoa)
+            if len(val) == 4:   # IPv4
                 try:
                     return socket.inet_ntop(socket.AF_INET, val)
-                except Exception: pass
-            if len(val) == 16:  # likely IPv6
+                except Exception:
+                    pass
+            if len(val) == 16:  # IPv6
                 try:
                     return socket.inet_ntop(socket.AF_INET6, val)
-                except Exception: pass
+                except Exception:
+                    pass
 
-            # Attempt UTF-8 decode for other byte strings (payloads/text fields)
-            if len(val) > 0 and len(val) <= 512:
+            # Try UTF-8 for text payloads
+            if 0 < len(val) <= 512:
                 try:
-                    decoded = val.decode('utf-8',errors="replace")
+                    decoded = val.decode('utf-8', errors="replace")
                     if all(32 <= ord(c) <= 126 or c in '\n\r\t\x0b\x0c' for c in decoded):
                         res = decoded.strip()
                         return res[:max_len] + "..." if len(res) > max_len else res
-                except Exception: pass
+                except Exception:
+                    pass
 
             if len(val) > 48:
                 return val[:48].hex() + f" ... ({len(val)} bytes)"
@@ -424,149 +427,233 @@ class FastDissector:
 
         if isinstance(val, int):
             return str(val)
-
         if isinstance(val, list):
             if not val:
                 return "[]"
             items = [FastDissector._safe_str(item, 60) for item in val[:6]]
             extra = f" ... ({len(val)} total)" if len(val) > 6 else ""
             return "[" + ", ".join(items) + extra + "]"
-
         if isinstance(val, dict):
             if not val:
                 return "{}"
             preview = [f"{k}:{FastDissector._safe_str(v, 40)}" for k, v in list(val.items())[:4]]
             extra = " ..." if len(val) > 4 else ""
             return "{" + ", ".join(preview) + extra + "}"
-        
+
         try:
             sval = str(val)
             return sval[:max_len] + "..." if len(sval) > max_len else sval
         except Exception:
             return f"<unprintable {type(val).__name__}>"
 
+    # ====================== TLS FINGERPRINTING ======================
+
+    @staticmethod
+    def _parse_ja3_client_hello(handshake) -> Dict[str, Any]:
+        """Extract data for JA3 fingerprint (ClientHello)."""
+        ja3_info = {"ja3": "N/A", "ciphers": [], "extensions": [], "curves": [], "points": [], "sni": None}
+        # GREASE values (RFC 8701) should be ignored for JA3 calculation
+        grease = {0x0a0a, 0x1a1a, 0x2a2a, 0x3a3a, 0x4a4a, 0x5a5a, 0x6a6a, 0x7a7a,
+                  0x8a8a, 0x9a9a, 0xaaaa, 0xbaba, 0xcaca, 0xdada, 0xeaea, 0xfafa}
+
+        try:
+            # Access the underlying codes from dpkt ciphersuite objects
+            ciphers = getattr(handshake, 'ciphersuites', getattr(handshake, 'cipher_suites', []))
+            ja3_info["ciphers"] = [getattr(c, 'code', c) for c in ciphers if getattr(c, 'code', c) not in grease]
+
+            extensions = getattr(handshake, 'extensions', [])
+            for ext in extensions:
+                ext_type = getattr(ext, 'type', None)
+                if ext_type is None or ext_type in grease:
+                    continue
+
+                ja3_info["extensions"].append(ext_type)
+
+                # SNI
+                if ext_type == 0:  # server_name
+                    try:
+                        for name in getattr(ext, 'server_names', []):
+                            if hasattr(name, 'name'):
+                                ja3_info["sni"] = name.name.decode('utf-8', errors='replace')
+                    except Exception:
+                        pass
+
+                # Supported Groups (elliptic curves)
+                elif ext_type == 10:
+                    try:
+                        data = getattr(ext, 'data', b'')
+                        if len(data) >= 2:
+                            list_len = struct.unpack('!H', data[:2])[0]
+                            for i in range(2, 2 + list_len, 2):
+                                val = struct.unpack('!H', data[i:i+2])[0]
+                                if val not in grease:
+                                    ja3_info["curves"].append(val)
+                    except Exception:
+                        pass
+
+                # EC Point Formats
+                elif ext_type == 11:
+                    try:
+                        data = getattr(ext, 'data', b'')
+                        if len(data) >= 1:
+                            list_len = data[0]
+                            for i in range(1, 1 + list_len):
+                                ja3_info["points"].append(data[i])
+                    except Exception:
+                        pass
+
+            # Build JA3 string: SSLVersion,Cipher,SSLExtension,EllipticCurve,EllipticCurvePointFormat
+            ja3_str = f"{handshake.version}," \
+                      f"{'-'.join(map(str, ja3_info['ciphers']))}," \
+                      f"{'-'.join(map(str, ja3_info['extensions']))}," \
+                      f"{'-'.join(map(str, ja3_info['curves']))}," \
+                      f"{'-'.join(map(str, ja3_info['points']))}"
+            ja3_info["ja3"] = hashlib.md5(ja3_str.encode('utf-8')).hexdigest()
+
+        except Exception as e:
+            logger.debug("JA3 parsing error: %s", e)
+
+        return ja3_info
+
     @staticmethod
     def _parse_tls_cert(cert_der: bytes) -> Dict[str, Any]:
-        """Enhanced X.509 parsing with CDP and Authority Information Access (AIA)."""
+        """Enhanced X.509 certificate parsing."""
         info: Dict[str, Any] = {
             "subject": "Unknown", "issuer": "Unknown",
             "not_before": None, "not_after": None,
-            "serial": None, "fingerprint": None,
+            "serial": None,
+            "fingerprint_sha256": None,
+            "fingerprint_sha1": None,
+            "san": [],
             "crl_distribution_points": [],
             "ocsp_responders": [],
-            "pubkey_hash": None,
+            "pubkey_algorithm": None,
+            "is_expired": False,
+            "is_self_signed": False,
         }
+
         try:
             if CRYPTOGRAPHY_AVAILABLE:
                 cert = x509.load_der_x509_certificate(cert_der, default_backend())
-                info["subject"] = str(cert.subject)
-                info["issuer"] = str(cert.issuer)
-                info["not_before"] = cert.not_valid_before_utc.isoformat() if hasattr(cert, 'not_valid_before_utc') else str(cert.not_valid_before)
-                info["not_after"] = cert.not_valid_after_utc.isoformat() if hasattr(cert, 'not_valid_after_utc') else str(cert.not_valid_after)
-                info["serial"] = hex(cert.serial_number)
-                info["fingerprint"] = cert.fingerprint(hashes.SHA256()).hex()
 
+                info["subject"] = cert.subject.rfc4514_string()
+                info["issuer"] = cert.issuer.rfc4514_string()
+                info["not_before"] = cert.not_valid_before_utc.isoformat()
+                info["not_after"] = cert.not_valid_after_utc.isoformat()
+                info["serial"] = hex(cert.serial_number)
+                info["fingerprint_sha256"] = cert.fingerprint(hashes.SHA256()).hex()
+                info["fingerprint_sha1"] = cert.fingerprint(hashes.SHA1()).hex()
+
+                # Subject Alternative Names
+                try:
+                    san_ext = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName)
+                    info["san"] = [name.value for name in san_ext.value]
+                except x509.ExtensionNotFound:
+                    pass
+
+                # Public Key Info
+                info["pubkey_algorithm"] = cert.public_key().__class__.__name__
+
+                # CRL and OCSP
                 for ext in cert.extensions:
                     if isinstance(ext.value, x509.CRLDistributionPoints):
                         for dp in ext.value:
                             for point in dp.full_name:
                                 if isinstance(point, x509.UniformResourceIdentifier):
-                                    info["crl_distribution_points"].append(str(point.value))
+                                    info["crl_distribution_points"].append(point.value)
                     if isinstance(ext.value, x509.AuthorityInformationAccess):
                         for ad in ext.value:
-                            if ad.access_method == x509.ObjectIdentifier("1.3.6.1.5.5.7.48.1"):
+                            if ad.access_method == x509.oid.AuthorityInformationAccessOID.OCSP:
                                 if isinstance(ad.access_location, x509.UniformResourceIdentifier):
-                                    info["ocsp_responders"].append(str(ad.access_location.value))
+                                    info["ocsp_responders"].append(ad.access_location.value)
+
+                # Basic checks
+                now = datetime.utcnow()
+                info["is_expired"] = cert.not_valid_after_utc < now
+                info["is_self_signed"] = cert.subject == cert.issuer
+
             else:
-                info["subject"] = "Install 'cryptography' for full parsing"
-                info["fingerprint"] = hashlib.sha256(cert_der).hex()
+                info["fingerprint_sha256"] = hashlib.sha256(cert_der).hex()
+                info["subject"] = "Install cryptography for full parsing"
+
         except Exception as e:
             logger.debug("Cert parse error: %s", e)
-            if not info["fingerprint"]:
-                info["fingerprint"] = hashlib.sha256(cert_der).hex()
+            if not info["fingerprint_sha256"]:
+                info["fingerprint_sha256"] = hashlib.sha256(cert_der).hex()
+
         return info
 
     @staticmethod
     def _parse_tls_handshake(tcp_payload: bytes) -> Dict[str, Any]:
-        """Robust TLS handshake parser: ServerHello, ClientHello (SNI), full cert chain, OCSP Stapling."""
+        """Robust TLS handshake parser with JA3 support."""
         result: Dict[str, Any] = {
             "certs": [],
             "sni": None,
             "version": None,
             "cipher": None,
+            "ja3": None,
+            "ja3_info": {},
             "ocsp_stapled": False,
-            "ocsp_response": None,
-            "ocsp_status": "None",
-            "handshake_type": "Unknown"
+            "handshake_type": "Unknown",
+            "tls13": False,
         }
+
         if not tcp_payload or len(tcp_payload) < 5:
             return result
 
         try:
             tls = dpkt.ssl.TLS(tcp_payload)
             records = getattr(tls, 'records', [tls])
+
             for record in records:
                 if getattr(record, 'type', None) != 22:  # Handshake
                     continue
                 try:
                     handshake = dpkt.ssl.TLSHandshake(record.data)
                     hs_type = getattr(handshake, 'type', None)
-                    # === Certificate Message ===
-                    if hs_type == 11 or hasattr(handshake, 'certificates'):
+
+                    if hs_type == 1:  # ClientHello
+                        result["handshake_type"] = "ClientHello"
+                        inner = handshake.data
+                        result["version"] = f"0x{inner.version:04x}"
+                        ja3_data = FastDissector._parse_ja3_client_hello(inner)
+                        result["ja3"] = ja3_data["ja3"]
+                        result["ja3_info"] = ja3_data
+                        result["sni"] = ja3_data["sni"]
+
+                    elif hs_type == 2:  # ServerHello
+                        result["handshake_type"] = "ServerHello"
+                        inner = handshake.data
+                        if hasattr(inner, 'version'):
+                            result["version"] = f"0x{inner.version:04x}"
+                            if inner.version == 0x0304:
+                                result["tls13"] = True
+                        cipher = getattr(inner, 'ciphersuite', getattr(inner, 'cipher_suite', None))
+                        if cipher:
+                            result["cipher"] = f"0x{getattr(cipher, 'code', cipher):04x}"
+
+                    elif hs_type == 11:  # Certificate
                         result["handshake_type"] = "Certificate"
-                        cert_list = getattr(handshake, 'certificates', [])
-                        for cert_der in cert_list:
+                        inner = handshake.data
+                        for cert_der in getattr(inner, 'certificates', []):
                             if isinstance(cert_der, (bytes, bytearray)) and len(cert_der) > 0:
                                 parsed = FastDissector._parse_tls_cert(cert_der)
                                 result["certs"].append(parsed)
-                    # === Server Hello ===
-                    elif hs_type == 2:
-                        result["handshake_type"] = "ServerHello"
-                        if hasattr(handshake, 'version'):
-                            result["version"] = f"0x{handshake.version:04x}"
-                        if hasattr(handshake, 'cipher_suite'):
-                            result["cipher"] = f"0x{handshake.cipher_suite:04x}"
-                        # Check for TLS 1.3 via supported_versions extension
-                        try:
-                            for ext in getattr(handshake, 'extensions', []):
-                                if getattr(ext, 'type', None) == 43: # supported_versions
-                                    # Server selects a single version (2 bytes)
-                                    if hasattr(ext, 'data') and len(ext.data) >= 2:
-                                        ver = struct.unpack('!H', ext.data[:2])[0]
-                                        if ver == 0x0304:
-                                            result["version"] = "TLS 1.3"
-                        except Exception:
-                            pass
-                    # === Client Hello (SNI) ===
-                    elif hs_type == 1:
-                        result["handshake_type"] = "ClientHello"
-                        # Extract SNI (extension 0)
-                        try:
-                            for ext in getattr(handshake, 'extensions', []):
-                                if getattr(ext, 'type', None) == 0:  # server_name
-                                    for name in getattr(ext, 'server_names', []):
-                                        if hasattr(name, 'name'):
-                                            result["sni"] = name.name.decode('utf-8', errors='replace')
-                        except Exception:
-                            pass
-                    # === Certificate Status (OCSP Stapling) ===
-                    elif hs_type == 22:
+
+                    elif hs_type == 22:  # Certificate Status (OCSP Stapling)
                         result["ocsp_stapled"] = True
-                        result["ocsp_status"] = "Stapled"
-                        result["ocsp_response"] = f"Present ({len(record.data)} bytes)"
+
                 except Exception as inner_e:
                     logger.debug("Inner handshake parse failed: %s", inner_e)
-            # Fallback heuristics if parsing failed
-            if not result["certs"] and b"\x0b\x00" in tcp_payload[:512]:  # Certificate msg type
-                # Try raw search for certs (very rough)
-                pass
+
         except Exception as e:
             logger.debug("TLS handshake parse error: %s", e)
+
         return result
 
     @staticmethod
     def _dissect_layer(layer: Any, depth: int = 0) -> List[Tuple[str, Dict[str, Any]]]:
-        """Recursively dissect nested layers with comprehensive protocol support."""
+        """Recursively dissect nested protocol layers."""
         layers: List[Tuple[str, Dict[str, Any]]] = []
         if layer is None or isinstance(layer, (bytes, bytearray)) or depth > 12:
             return layers
@@ -576,14 +663,11 @@ class FastDissector:
             layer_name = "IPv4" if raw_name == "IP" else ("IPv6" if raw_name == "IP6" else raw_name)
             fields: Dict[str, Any] = {}
 
-            # Use dpkt header definitions if available for clean field extraction
             if hasattr(layer, '__hdr__'):
                 for hdr_item in getattr(layer, '__hdr__', []):
-                    # dpkt __hdr__ is (name, format, default)
                     name = hdr_item[0]
                     fields[name] = getattr(layer, name)
             else:
-                # Fallback for dynamic objects (DNS, HTTP)
                 for attr in dir(layer):
                     if attr.startswith('_') or attr in ('data', 'unpack', 'pack', 'off', 'sum', '__'):
                         continue
@@ -593,7 +677,6 @@ class FastDissector:
 
             layers.append((layer_name, fields))
 
-            # Recurse into any dpkt payload
             payload = getattr(layer, 'data', None)
             if payload and hasattr(payload, '__class__') and payload.__class__.__module__.startswith('dpkt'):
                 layers.extend(FastDissector._dissect_layer(payload, depth + 1))
@@ -605,17 +688,18 @@ class FastDissector:
 
     @staticmethod
     def dissect(raw_pkt: bytes) -> Dict[str, Any]:
+        """Main dissection entry point."""
         res: Dict[str, Any] = {
             "proto": "OTHER", "src": "N/A", "dst": "N/A", "summary": "Unknown Frame",
             "len": len(raw_pkt), "layers": [], "creds": [], "ports": [], "tls_info": {},
         }
+
         try:
             eth = dpkt.ethernet.Ethernet(raw_pkt)
-            # Pre-populate layers so we have data even if sub-parsing fails
             res["layers"] = FastDissector._dissect_layer(eth)
 
-            # Core address/summary extraction
             payload = eth.data
+
             if isinstance(payload, dpkt.arp.ARP):
                 arp = payload
                 res["proto"] = "ARP"
@@ -628,8 +712,8 @@ class FastDissector:
                 ip_pkt = payload
                 is_v6 = isinstance(ip_pkt, dpkt.ip6.IP6)
 
-                res["src"] = ip6_to_str(ip_pkt.src) if is_v6 else ip_to_str(ip_pkt.src)
-                res["dst"] = ip6_to_str(ip_pkt.dst) if is_v6 else ip_to_str(ip_pkt.dst)
+                res["src"] = (ip6_to_str if is_v6 else ip_to_str)(ip_pkt.src)
+                res["dst"] = (ip6_to_str if is_v6 else ip_to_str)(ip_pkt.dst)
                 res["proto"] = "IPv6" if is_v6 else "IPv4"
 
                 if isinstance(ip_pkt.data, dpkt.tcp.TCP):
@@ -640,28 +724,30 @@ class FastDissector:
                     res["ports"] = [tcp.sport, tcp.dport]
                     flagstr = FastDissector._tcp_flag_string(tcp.flags)
                     res["summary"] = f"TCP {tcp.sport}->{tcp.dport} [{flagstr}] Seq={tcp.seq} Ack={tcp.ack} Len={len(tcp.data or b'')}"
+
                     if tcp.data:
                         res["creds"] = FastDissector._scan_credentials(tcp.data)
 
-                    # Enhanced HTTP
+                    # HTTP
                     if tcp.dport in (80, 8080) or tcp.sport in (80, 8080):
                         try:
                             data = tcp.data
                             http = (dpkt.http.Response if data.startswith(b'HTTP/') else dpkt.http.Request)(data)
                             res["proto"] = "HTTP"
-                            res["summary"] = f"HTTP {http.method if hasattr(http,'method') else http.version} {getattr(http,'uri',http.status)}"
-                            # Link back so recursive dissection finds it
+                            res["summary"] = f"HTTP {getattr(http, 'method', http.version)} {getattr(http, 'uri', getattr(http, 'status', ''))}"
                             tcp.data = http
                         except Exception:
                             pass
+
+                    # TLS
                     elif tcp.dport == 443 or tcp.sport == 443:
                         res["proto"] = "TLS"
                         tls_info = FastDissector._parse_tls_handshake(tcp.data or b'')
                         res["tls_info"] = tls_info
 
                         sni_part = f" SNI:{tls_info['sni']}" if tls_info.get('sni') else ""
-                        cert_count = len(tls_info['certs'])
-                        res["summary"] = f"TLS {tcp.sport}->{tcp.dport} v{tls_info.get('version','?')} Certs:{len(tls_info['certs'])}{sni_part}"
+                        ja3_part = f" JA3:{tls_info['ja3'][:12]}" if tls_info.get('ja3') and tls_info['ja3'] != "N/A" else ""
+                        res["summary"] = f"TLS {tcp.sport}->{tcp.dport} v{tls_info.get('version','?')}{ja3_part} Certs:{len(tls_info['certs'])}{sni_part}"
 
                 elif isinstance(ip_pkt.data, dpkt.udp.UDP):
                     udp = ip_pkt.data
@@ -687,24 +773,24 @@ class FastDissector:
                             res["summary"] = f"NTP v{ntp.v} Mode {ntp.mode} Stratum {ntp.stratum}"
                         except Exception:
                             pass
-                    # Add more UDP protocols as needed...
 
+                # ICMP / ICMPv6 (unchanged)
                 elif isinstance(ip_pkt.data, dpkt.icmp.ICMP):
                     icmp = ip_pkt.data
                     res["proto"] = "ICMP"
-                    res["summary"] = f"ICMP Type={icmp.type} Code={icmp.code} {getattr(icmp, 'echo', '')}"
+                    res["summary"] = f"ICMP Type={icmp.type} Code={icmp.code}"
 
                 elif hasattr(dpkt, 'icmp6') and isinstance(ip_pkt.data, dpkt.icmp6.ICMP6):
                     icmp6 = ip_pkt.data
                     res["proto"] = "ICMPv6"
                     res["summary"] = f"ICMPv6 Type={icmp6.type} Code={icmp6.code}"
 
-            # Fallback for other Ethernet types (e.g. VLAN, etc.)
-            elif eth.type == 0x8100:  # 802.1Q VLAN
+            # VLAN fallback
+            elif eth.type == 0x8100:
                 res["proto"] = "VLAN"
                 res["summary"] = "802.1Q VLAN Frame"
 
-            # Re-dissect to capture any enrichment from sub-parsers (like HTTP)
+            # Re-dissect after enrichment
             res["layers"] = FastDissector._dissect_layer(eth)
 
         except Exception as e:
@@ -714,7 +800,7 @@ class FastDissector:
 
     @staticmethod
     def get_hexdump(data: bytes, max_bytes: int = 1024) -> str:
-        """Unchanged - good hex view."""
+        """Generate nice hexdump."""
         truncated = len(data) > max_bytes
         view = data[:max_bytes]
         lines = []
@@ -1057,45 +1143,88 @@ class vimSharkApp:
             return
         raw, info, _ = item
 
-        details = [urwid.Text(f"### Packet #{idx} Dissection ###"), urwid.Text("")]
+        details = [
+            urwid.Text(f"### Packet #{idx} Dissection ###"),
+            urwid.Text(f"Length: {info.get('len', len(raw))} bytes"),
+            urwid.Text("")
+        ]
+
+        # Core Layers
         for layer_name, fields in info.get('layers', []):
             details.append(urwid.AttrMap(urwid.Text(f"-- {layer_name} --"), 'header'))
             for k, v in fields.items():
-                # Skip nested protocol data and internal dpkt artifacts (callables, private fields)
                 if k == 'data' or k.startswith('_') or callable(v):
-                    continue  # nested protocol object, shown as its own layer
-                sval = FastDissector._safe_str(v, 80)
-                details.append(urwid.Text(f"  {k:<15}: {sval}"))
+                    continue
+                sval = FastDissector._safe_str(v, 90)
+                details.append(urwid.Text(f"  {k:<18}: {sval}"))
 
-        # TLS Certificate Details
+        # ==================== TLS SECTION ====================
         tls_info = info.get('tls_info', {})
-        if tls_info and (tls_info.get('certs') or tls_info.get('sni')):
+        if tls_info and tls_info.get('handshake_type') != "Unknown":
             details.append(urwid.Text(""))
-            details.append(urwid.AttrMap(urwid.Text("=== TLS Handshake ==="), 'pkt_tls'))
-            
+            details.append(urwid.AttrMap(urwid.Text("=== TLS / SSL ==="), 'pkt_tls'))
+
+            if tls_info.get('version'):
+                ver_text = tls_info['version']
+                if tls_info.get('tls13'):
+                    ver_text += " (TLS 1.3)"
+                details.append(urwid.Text(f"  Version: {ver_text}"))
+
+            if tls_info.get('cipher'):
+                details.append(urwid.Text(f"  Cipher Suite: {tls_info['cipher']}"))
+
+            if tls_info.get('ja3'):
+                ja3_color = 'selected' if tls_info['ja3'] != "N/A" else 'pkt_other'
+                details.append(urwid.AttrMap(
+                    urwid.Text(f"  JA3 Fingerprint: {tls_info['ja3']}"), ja3_color))
+
             if tls_info.get('sni'):
                 details.append(urwid.Text(f"  SNI: {tls_info['sni']}"))
-            if tls_info.get('version'):
-                details.append(urwid.Text(f"  Version: {tls_info['version']}"))
-            if tls_info.get('cipher'):
-                details.append(urwid.Text(f"  Cipher: {tls_info['cipher']}"))
 
-            if tls_info.get('certs'):
-                details.append(urwid.AttrMap(urwid.Text(f"=== Certificates ({len(tls_info['certs'])}) ==="), 'pkt_tls'))
-                for i, cert in enumerate(tls_info['certs']):
-                    details.append(urwid.Text(f"  Cert #{i+1}:"))
-                    for k, v in cert.items():
-                        if v and k not in ('crl_distribution_points', 'ocsp_responders'):
-                            details.append(urwid.Text(f"    {k:<15}: {FastDissector._safe_str(v, 100)}"))
+            if tls_info.get('ocsp_stapled'):
+                details.append(urwid.AttrMap(urwid.Text("  OCSP Stapling: Present"), 'pkt_http'))
 
+            # Certificates
+            certs = tls_info.get('certs', [])
+            if certs:
+                details.append(urwid.Text(""))
+                details.append(urwid.AttrMap(
+                    urwid.Text(f"=== Certificates ({len(certs)}) ==="), 'pkt_tls'))
+
+                for i, cert in enumerate(certs):
+                    header_color = 'pkt_icmp' if cert.get('is_expired') else 'pkt_tls'
+                    details.append(urwid.AttrMap(
+                        urwid.Text(f"  Cert #{i+1}:"), header_color))
+
+                    details.append(urwid.Text(f"    Subject : {cert.get('subject', 'Unknown')}"))
+                    details.append(urwid.Text(f"    Issuer  : {cert.get('issuer', 'Unknown')}"))
+                    details.append(urwid.Text(f"    Valid   : {cert.get('not_before')} → {cert.get('not_after')}"))
+
+                    if cert.get('is_expired'):
+                        details.append(urwid.AttrMap(urwid.Text("    [!]  CERTIFICATE EXPIRED"), 'pkt_icmp'))
+
+                    if cert.get('is_self_signed'):
+                        details.append(urwid.AttrMap(urwid.Text("    [!]  Self-Signed Certificate"), 'pkt_icmp'))
+
+                    if cert.get('san'):
+                        details.append(urwid.Text(f"    SAN     : {', '.join(cert['san'][:5])}" +
+                                                (" ..." if len(cert['san']) > 5 else "")))
+
+                    fp = cert.get('fingerprint_sha256')
+                    if fp:
+                        details.append(urwid.Text(f"    SHA256  : {fp[:32]}..."))
+
+                    if cert.get('ocsp_responders'):
+                        details.append(urwid.Text(f"    OCSP    : {cert['ocsp_responders'][0]}"))
+
+        # Credential warnings
         if info.get('creds'):
             details.append(urwid.Text(""))
-            details.append(urwid.AttrMap(urwid.Text("!! Potential credential exposure:"), 'pkt_icmp'))
+            details.append(urwid.AttrMap(urwid.Text("!! POTENTIAL CREDENTIAL EXPOSURE !!"), 'pkt_icmp'))
             for c in info['creds']:
-                details.append(urwid.Text(f"   - {c}"))
+                details.append(urwid.Text(f"   • {c}"))
 
         self.det_walker[:] = details
-
         self.update_hex_view()
 
     def update_hex_view(self) -> None:
@@ -1378,9 +1507,29 @@ class vimSharkApp:
         except Exception as e:
             self.queue_alert(f"Export failed: {e}")
 
+    def _get_highlighted_markup(self, text: str, query: str) -> Any:
+        """Helper to highlight search matches in text for urwid.Text markup."""
+        if not query or query.lower() not in text.lower():
+            return text
+        parts = []
+        last_end = 0
+        l_text = text.lower()
+        l_query = query.lower()
+        q_len = len(query)
+        idx = l_text.find(l_query)
+        while idx != -1:
+            if idx > last_end:
+                parts.append(text[last_end:idx])
+            parts.append(('selected', text[idx:idx + q_len]))
+            last_end = idx + q_len
+            idx = l_text.find(l_query, last_end)
+        if last_end < len(text):
+            parts.append(text[last_end:])
+        return [p for p in parts if p != ""]
+
     def follow_stream(self) -> None:
-        """Reassemble and display a TCP stream for the focused packet."""
-        focus = self.listbox.get_focus()[0]
+        """Reassemble and display a TCP or UDP stream for the focused packet."""
+        focus = self.listbox.focus
         if not focus:
             return
         btn = focus.base_widget
@@ -1397,18 +1546,26 @@ class vimSharkApp:
             if not isinstance(eth.data, (dpkt.ip.IP, dpkt.ip6.IP6)):
                 return
             ip_pkt = eth.data
-            if not isinstance(ip_pkt.data, dpkt.tcp.TCP):
+            
+            if isinstance(ip_pkt.data, dpkt.tcp.TCP):
+                proto_class = dpkt.tcp.TCP
+                proto_label = "TCP"
+            elif isinstance(ip_pkt.data, dpkt.udp.UDP):
+                proto_class = dpkt.udp.UDP
+                proto_label = "UDP"
+            else:
                 return
-            tcp = ip_pkt.data
-            addr_set = {(ip_pkt.src, tcp.sport), (ip_pkt.dst, tcp.dport)}
-            orig_src = (ip_pkt.src, tcp.sport)
+                
+            transport = ip_pkt.data
+            addr_set = {(ip_pkt.src, transport.sport), (ip_pkt.dst, transport.dport)}
+            orig_src = (ip_pkt.src, transport.sport)
 
             src_str = ip_to_str(ip_pkt.src) if not isinstance(ip_pkt, dpkt.ip6.IP6) else ip6_to_str(ip_pkt.src)
             dst_str = ip_to_str(ip_pkt.dst) if not isinstance(ip_pkt, dpkt.ip6.IP6) else ip6_to_str(ip_pkt.dst)
 
             stream_rows: List[urwid.Widget] = [
                 urwid.AttrMap(urwid.Text(
-                    f"--- TCP Stream {src_str}:{tcp.sport} <-> {dst_str}:{tcp.dport} (press q to close) ---"
+                    f"--- {proto_label} Stream {src_str}:{transport.sport} <-> {dst_str}:{transport.dport} (press q to close) ---"
                 ), 'header'),
                 urwid.Text(""),
             ]
@@ -1425,16 +1582,23 @@ class vimSharkApp:
                 if not isinstance(e.data, (dpkt.ip.IP, dpkt.ip6.IP6)):
                     continue
                 p_ip, p_data = e.data, e.data.data
-                if not isinstance(p_data, dpkt.tcp.TCP):
+                if not isinstance(p_data, proto_class):
                     continue
-                p_tcp = p_data
-                pair = {(p_ip.src, p_tcp.sport), (p_ip.dst, p_tcp.dport)}
+                
+                pair = {(p_ip.src, p_data.sport), (p_ip.dst, p_data.dport)}
                 if pair != addr_set:
                     continue
                 if not p_tcp.data:
                     continue
-                txt = "".join(chr(b) if 32 <= b <= 126 or b in (10, 13) else "." for b in p_tcp.data)
-                direction = '->' if (p_ip.src, p_tcp.sport) == orig_src else '<-'
+                
+                # Extract raw bytes from payload (handles sub-parsed protocol objects)
+                payload = p_data.data
+                if not isinstance(payload, bytes):
+                    try: payload = bytes(payload)
+                    except: continue
+
+                txt = "".join(chr(b) if 32 <= b <= 126 or b in (10, 13) else "." for b in payload)
+                direction = '->' if (p_ip.src, p_data.sport) == orig_src else '<-'
                 color = 'pkt_tcp' if direction == '->' else 'pkt_udp'
                 
                 markup = [f"[{direction}] "]
