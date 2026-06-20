@@ -1,37 +1,16 @@
 #!/usr/bin/env python3
-"""
-vimShark - A retro/cyber-themed TUI packet sniffer with TLS/JA3 fingerprinting.
-
-Dependencies (required):  dpkt, urwid, pcapy-ng
-Dependencies (optional):  cryptography (full X.509 cert parsing), scapy (ARP probe fallback)
-"""
-
-import sys
-import os
-
+import sys, os
 # Support for local package installation (mitigation for sudo/venv conflicts)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-if SCRIPT_DIR not in sys.path:
+if SCRIPT_DIR not in sys.path: 
     sys.path.insert(0, SCRIPT_DIR)
-
-import time
-import threading
-import queue
-import re
-import socket
-import struct
-import argparse
-import logging
-import hashlib
+import time, threading, queue, re, socket, struct, argparse, logging, hashlib
 from datetime import datetime, timezone
 from collections import deque
 from typing import Dict, List, Optional, Any, Tuple, Callable, Set, FrozenSet
-
-try:
-    import fcntl
+try: import fcntl
 except ImportError:
     fcntl = None
-
 try:
     from cryptography import x509
     from cryptography.hazmat.backends import default_backend
@@ -42,55 +21,52 @@ except ImportError:
     x509 = None
     hashes = None
     default_backend = None
-
 import urwid
 import dpkt
 
 # Optional dpkt submodules - not all builds ship every protocol module
-try:
-    import dpkt.ntp  # noqa: F401
-except Exception:
-    pass
-try:
-    import dpkt.icmp6  # noqa: F401
-except Exception:
-    pass
-try:
-    import dpkt.ssl  # noqa: F401
-except Exception:
-    pass
-
-try:
-    import pcapy
+try: import dpkt.ntp  # noqa: F401
+except Exception as E: print(f"[^] Failed to import `dpkt.ntp`.\n\t-> [{str(E.__class__.__name__)}]:\n\t\t- {str(E)}")
+try: import dpkt.icmp6  # noqa: F401
+except Exception as E: print(f"[^] Failed to import `dpkt.icmp6`.\n\t-> [{str(E.__class__.__name__)}]:\n\t\t- {str(E)}") 
+try: import dpkt.ssl  # noqa: F401
+except Exception as E: print(f"[^] Failed to import `dpkt.ssl`.\n\t-> [{str(E.__class__.__name__)}]:\n\t\t- {str(E)}") 
+try: import pcapy
 except ImportError:
-    print("[!] pcapy-ng is required: pip install pcapy-ng")
-    sys.exit(1)
+    print("[!] pcapy-ng is required: pip install pcapy-ng");sys.exit(1)
 
 try:
-    from scapy.all import ARP as ScapyARP, Ether as ScapyEther, srp as scapy_srp
-    SCAPY_AVAILABLE = True
-except Exception:
-    SCAPY_AVAILABLE = False
-
-__version__ = "0.2.2"
+    from scapy.all import ARP as ScapyARP, Ether as ScapyEther, srp as scapy_srp;SCAPY_AVAILABLE = True
+except Exception as E: 
+    SCAPY_AVAILABLE = False;print(f"[^] Failed to import `scapy` modules.\n\t-> [{str(E.__class__.__name__)}]:\n\t\t- {str(E)}")
+__version__ = "0.2.4"
 __author__ = "J4ck3LSyN"
-
-# ==============================================================================
-# LOGGING
-# ==============================================================================
-
-logging.basicConfig(
-    filename=os.path.join(SCRIPT_DIR, "vimshark.log"),
-    level=logging.WARNING,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
+logging.basicConfig(filename=os.path.join(SCRIPT_DIR, "vimshark.log"),level=logging.WARNING,format="%(asctime)s [%(levelname)s] %(message)s",)
 logger = logging.getLogger("vimshark")
-
-# ==============================================================================
-# THEMES
-# ==============================================================================
-
-THEMES: Dict[str, List[Tuple]] = {
+THEMES:Dict[str, List[Tuple]] = {
+    "nullsecurityx":[
+        ('bg', 'default', 'default', 'default', '#e0e0e0', '#0a0a0f'),          
+        ('header', 'white', 'dark red', 'bold', '#ffffff', '#8b0000'),      
+        ('footer', 'light gray', 'black', None, '#a8a8a8', '#1c1c1c'),            
+        ('border', 'dark red', 'default', 'default', '#ff1a4d', '#0a0a0f'),
+        ('selected', 'black', 'light red', 'standout', '#0a0a0f', '#ff2a2a'),
+        ('pkt_tcp', 'light cyan', 'default', 'default', '#00f0ff', '#0a0a0f'),    
+        ('pkt_udp', 'light magenta', 'default', 'default', '#ff00aa', '#0a0a0f'),
+        ('pkt_arp', 'yellow', 'default', 'default', '#ffd700', '#0a0a0f'),
+        ('pkt_dns', 'light cyan', 'default', 'default', '#40e0ff', '#0a0a0f'),
+        ('pkt_icmp', 'light red', 'default', 'default', '#ff3333', '#0a0a0f'),
+        ('pkt_icmp6', 'light red', 'default', 'default', '#ff3333', '#0a0a0f'),
+        ('pkt_http', 'light green', 'default', 'default', '#00ff9f', '#0a0a0f'),
+        ('pkt_tls', 'light blue', 'default', 'default', '#00b7ff', '#0a0a0f'),
+        ('pkt_ntp', 'yellow', 'default', 'default', '#ffd700', '#0a0a0f'),
+        ('pkt_other', 'light gray', 'default', 'default', '#777777', '#0a0a0f'),
+        ('spark_bar', 'light red', 'default', None, '#ff2a2a', '#0a0a0f'),
+        ('text_focus', 'black', 'light red', None, '#0a0a0f', '#ff2a2a'),
+        ('warn', 'light red', 'default', 'bold', '#ff5555', '#0a0a0f'),
+        ('good', 'light green', 'default', 'bold', '#00ff9f', '#0a0a0f'),
+        ('ja3', 'black', 'yellow', 'standout', '#0a0a0f', '#ffd700'),
+        ('dim', 'dark gray', 'default', 'default', '#555555', '#0a0a0f'),
+    ],
     "arch_yuki": [
         ('bg', 'default', 'default', 'default', '#e0def4', '#1a1625'),
         ('header', 'black', 'light magenta', 'bold', '#1a1625', '#c4a7e7'),
@@ -328,6 +304,12 @@ def fmt_ts(iso_dt: Optional[str]) -> str:
         return "Unknown"
     return iso_dt.replace("T", " ").split("+")[0].split(".")[0] + "Z"
 
+    return iso_dt.replace("T", " ").split("+")[0].split(".")[0] + "Z"
+
+
+# ==============================================================================
+# TRAFFIC TELEMETRY
+# ==============================================================================
 
 class TrafficTelemetry:
     """Tracks rolling packet/byte rates with EMA smoothing and sparkline history."""
@@ -456,6 +438,26 @@ _TLS_VERSION_NAMES: Dict[int, str] = {
     0x0302: "TLS 1.1",
     0x0303: "TLS 1.2",
     0x0304: "TLS 1.3",
+}
+
+# IANA cipher‑suite names (partial – enough for common traffic)
+_CIPHER_SUITES: Dict[int, str] = {
+    0x0000: "TLS_NULL_WITH_NULL_NULL",
+    0x0001: "TLS_RSA_WITH_NULL_MD5",
+    0x0002: "TLS_RSA_WITH_NULL_SHA",
+    0x0005: "TLS_RSA_WITH_RC4_128_SHA",
+    0x002f: "TLS_RSA_WITH_AES_128_CBC_SHA",
+    0x0035: "TLS_RSA_WITH_AES_256_CBC_SHA",
+    0x003c: "TLS_RSA_WITH_AES_128_CBC_SHA256",
+    0x009c: "TLS_RSA_WITH_AES_128_GCM_SHA256",
+    0x009d: "TLS_RSA_WITH_AES_256_GCM_SHA384",
+    0xc02f: "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+    0xc030: "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+    0xc02b: "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+    0xc02c: "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
+    0x1301: "TLS_AES_128_GCM_SHA256",
+    0x1302: "TLS_AES_256_GCM_SHA384",
+    0x1303: "TLS_CHACHA20_POLY1305_SHA256",
 }
 
 
@@ -727,9 +729,8 @@ class FastDissector:
                 info["issuer"] = cert.issuer.rfc4514_string()
                 info["serial"] = hex(cert.serial_number)
 
-                # Validity period - try the modern UTC-aware accessors first,
-                # falling back to the naive datetime properties on older
-                # `cryptography` releases.
+                # Validity period – try the modern UTC-aware accessors first,
+                # falling back to the naive datetime properties on older releases.
                 try:
                     not_before = cert.not_valid_before_utc
                     not_after = cert.not_valid_after_utc
@@ -791,6 +792,7 @@ class FastDissector:
                 info["days_remaining"] = int((not_after - now).total_seconds() // 86400)
 
             else:
+                # Fallback – just hash the raw DER
                 info["fingerprint_sha256"] = hashlib.sha256(cert_der).hexdigest()
                 info["fingerprint_sha1"] = hashlib.sha1(cert_der).hexdigest()
                 info["subject"] = "Install 'cryptography' for full parsing"
@@ -808,9 +810,9 @@ class FastDissector:
     def _parse_tls_handshake(tcp_payload: bytes) -> Dict[str, Any]:
         """Robust TLS record/handshake parser with JA3/JA3S support.
 
-        Handles multi-record reads, multiple handshake messages per record,
-        and degrades gracefully on TLS 1.3 (where Certificate is encrypted
-        and thus invisible post-handshake) and on fragmented streams (where
+        Handles multi‑record reads, multiple handshake messages per record,
+        and degrades gracefully on TLS 1.3 (where Certificate is encrypted
+        and thus invisible post‑handshake) and on fragmented streams (where
         a single TCP segment may contain a partial handshake message).
         """
         result: Dict[str, Any] = {
@@ -835,7 +837,7 @@ class FastDissector:
             return result
 
         try:
-            # Initial sanity check: TLS record content types are 20-23
+            # Initial sanity check: TLS record content types are 20‑23
             if tcp_payload[0] not in (20, 21, 22, 23):
                 return result
 
@@ -879,15 +881,14 @@ class FastDissector:
                     try:
                         handshake = dpkt.ssl.TLSHandshake(h_data)
                     except (dpkt.NeedData, dpkt.UnpackError):
-                        # Fragmented handshake message split across TCP
-                        # segments - bail out cleanly rather than crash.
+                        # Fragmented handshake message split across TCP segments.
                         break
 
                     hs_type = getattr(handshake, 'type', None)
                     h_len = getattr(handshake, 'length', 0)
 
                     if len(h_data) < 4 + h_len:
-                        # Truncated - message body continues in a later segment
+                        # Truncated – message continues in a later segment.
                         if hs_type == 1:
                             result["handshake_type"] = "ClientHello (fragmented)"
                         elif hs_type == 2:
@@ -1051,8 +1052,8 @@ class FastDissector:
                         except Exception:
                             pass
 
-                    # TLS
-                    elif tcp.dport == 443 or tcp.sport == 443:
+                    # TLS (port‑agnostic)
+                    if tcp.data and tcp.data[:1] and tcp.data[0] in (20, 21, 22, 23):
                         res["proto"] = "TLS"
                         tls_info = FastDissector._parse_tls_handshake(tcp.data or b'')
                         res["tls_info"] = tls_info
@@ -1114,7 +1115,7 @@ class FastDissector:
                 res["proto"] = "VLAN"
                 res["summary"] = "802.1Q VLAN Frame"
 
-            # Build the layer tree once, after any in-place protocol enrichment
+            # Build the layer tree once, after any in‑place protocol enrichment
             res["layers"] = FastDissector._dissect_layer(eth)
 
         except Exception as e:
@@ -1158,7 +1159,7 @@ class IPReassembler:
         for k in expired:
             self._clear(k)
 
-        # Fragment offset is in 8-byte units
+        # Fragment offset is in 8‑byte units
         offset = (ip.off & dpkt.ip.IP_OFFMASK) * 8
         mf = bool(ip.off & dpkt.ip.IP_MF)
 
@@ -1196,8 +1197,8 @@ class IPReassembler:
 # ==============================================================================
 
 class FlowTracker:
-    """Lightweight bidirectional flow table. Tracks per-flow packet/byte
-    counters and last-seen timestamps so the UI can surface "top talkers"
+    """Lightweight bidirectional flow table. Tracks per‑flow packet/byte
+    counters and last‑seen timestamps so the UI can surface "top talkers"
     and basic conversation hints without a full state machine."""
 
     def __init__(self, max_flows: int = 2000):
@@ -1277,7 +1278,7 @@ def _get_field(summary: Dict[str, Any], field: str) -> Any:
 
 
 def _compile_expr_filter(expr: str) -> Callable[[Dict[str, Any]], bool]:
-    """Compile a `field==value`, `field!=value`, free-text, `&&`, `||`
+    """Compile a `field==value`, `field!=value`, free‑text, `&&`, `||`
     expression into a predicate. Recognized fields: proto, src, dst, srcip,
     dstip, sport, dport, port, len, sni, ja3, ja3s, cred."""
     or_groups = [g.strip() for g in expr.split('||')]
@@ -1348,8 +1349,7 @@ def compile_filter(expr: str) -> Callable[[Dict[str, Any]], bool]:
 # ==============================================================================
 
 class ThreatAuditor:
-    """Lightweight passive + active security checks: ARP spoof detection via
-    a kernel-seeded neighbor table, plus an opt-in active ARP probe."""
+    """Lightweight passive + active security checks with improved port scan detection."""
 
     def __init__(self, alert_cb: Callable[[str], None]):
         self.alert_cb = alert_cb
@@ -1358,10 +1358,34 @@ class ThreatAuditor:
         self.expired_cert_history: Set[str] = set()
         self.selfsigned_cert_history: Set[str] = set()
 
+        # Tracking structures
+        self.icmp_tracking: Dict[str, deque] = {}
+        self.syn_tracking: Dict[str, deque] = {}
+        self.scan_tracking: Dict[str, deque] = {}                    # src -> deque of (timestamp, dport)
+        self.incremental_tracking: Dict[Tuple[str, str], Dict[str, Any]] = {}
+
+        # Configuration
+        self.arp_auditor_enabled = True
+        self.port_scan_enabled: bool = True
+        self.syn_auditor_enabled = True
+        self.icmp_auditor_enabled = True
+
+        # Port‑scan tuning – the defaults are now low enough to catch a normal
+        # nmap “‑T4” sweep out‑of‑the‑box.  Users can still override them via the
+        # CLI flag ``--scan-threshold`` which maps to ``port_scan_unique_threshold``.
+        self.port_scan_unique_threshold: int = 12      # unique ports in window → “excessive”
+        self.port_scan_sequential_threshold: int = 8   # consecutive ports → “sequential”
+        self.port_scan_window: float = 10.0            # seconds
+
     def audit_packet(self, raw_pkt: bytes) -> None:
+        """Main entry point for packet auditing."""
         try:
             eth = dpkt.ethernet.Ethernet(raw_pkt)
+
+            # ARP Spoofing Detection
             if isinstance(eth.data, dpkt.arp.ARP):
+                if not self.arp_auditor_enabled:
+                    return
                 arp = eth.data
                 if arp.op == dpkt.arp.ARP_OP_REPLY:
                     ip_addr = ip_to_str(arp.spa)
@@ -1373,11 +1397,110 @@ class ThreatAuditor:
                             self.history.add(msg)
                             self.alert_cb(msg)
                     self.arp_table[ip_addr] = mac
+
+            # IP‑based traffic
+            elif isinstance(eth.data, (dpkt.ip.IP, dpkt.ip6.IP6)):
+                ip = eth.data
+                src_ip = ip6_to_str(ip.src) if isinstance(ip, dpkt.ip6.IP6) else ip_to_str(ip.src)
+
+                if isinstance(ip.data, (dpkt.tcp.TCP, dpkt.udp.UDP)):
+                    transport = ip.data
+                    proto = "TCP" if isinstance(transport, dpkt.tcp.TCP) else "UDP"
+
+                    # ==== PORT‑SCAN ==== (run for *any* transport)
+                    if self.port_scan_enabled:
+                        self._audit_port_scan(src_ip, transport.dport,
+                                              "TCP" if isinstance(transport, dpkt.tcp.TCP) else "UDP")
+
+                    # ==== TCP SYN FLOOD ====
+                    if isinstance(transport, dpkt.tcp.TCP) and self.syn_auditor_enabled:
+                        if (transport.flags & dpkt.tcp.TH_SYN) and not (transport.flags & dpkt.tcp.TH_ACK):
+                            self._audit_flood(src_ip, self.syn_tracking, "TCP SYN FLOOD", 50)
+
+                # ICMP Flood
+                elif (isinstance(ip.data, dpkt.icmp.ICMP) or
+                      (hasattr(dpkt, 'icmp6') and isinstance(ip.data, dpkt.icmp6.ICMP6))):
+                    if self.icmp_auditor_enabled:
+                        self._audit_flood(src_ip, self.icmp_tracking, "ICMP FLOOD", 40)
+
         except Exception as e:
             logger.debug("audit_packet error: %s", e)
 
+    def _audit_port_scan(self, src: str, dport: int, proto: str) -> None:
+        """Improved detection for both random/excessive and sequential port scanning."""
+        if not self.port_scan_enabled:
+            return
+
+        now = time.time()
+
+        # === 1. Unique Ports (Best for "excessive" / random scans like Nmap -T4) ===
+        if src not in self.scan_tracking:
+            self.scan_tracking[src] = deque(maxlen=64)  # bound memory
+
+        track = self.scan_tracking[src]
+        track.append((now, dport))
+
+        # Prune old entries
+        while track and now - track[0][0] > self.port_scan_window:
+            track.popleft()
+
+        unique_ports = {p[1] for p in track}
+        if len(unique_ports) >= self.port_scan_unique_threshold:
+            msg = (f"PORT SCAN: {src} touched {len(unique_ports)} unique {proto} ports "
+                   f"in last {self.port_scan_window}s")
+            if msg not in self.history:
+                self.history.add(msg)
+                self.alert_cb(msg)
+
+        # === 2. Sequential / Incremental Scan Detection ===
+        key = (src, proto)
+        if key not in self.incremental_tracking:
+            self.incremental_tracking[key] = {'last': dport, 'streak': 1, 'time': now}
+        else:
+            state = self.incremental_tracking[key]
+            time_gap = now - state['time']
+            port_gap = abs(dport - state['last'])
+
+            if time_gap > 8.0 or port_gap > 5:  # Reset on large gaps
+                if state['streak'] >= self.port_scan_sequential_threshold:
+                    msg = f"SEQ SCAN: {src} finished {proto} sequence of {state['streak']} ports"
+                    if msg not in self.history:
+                        self.history.add(msg)
+                        self.alert_cb(msg)
+                state['streak'] = 1
+            elif port_gap >= 1:
+                state['streak'] += 1
+
+                if state['streak'] >= self.port_scan_sequential_threshold:
+                    msg = f"SEQ SCAN DETECTED: {src} scanning {state['streak']} consecutive {proto} ports"
+                    if msg not in self.history:
+                        self.history.add(msg)
+                        self.alert_cb(msg)
+
+            state['last'] = dport
+            state['time'] = now
+
+    def _audit_flood(self, src: str, tracking_dict: Dict[str, deque], label: str, threshold: int) -> None:
+        """Generic flood detection using sliding window."""
+        now = time.time()
+        if src not in tracking_dict:
+            tracking_dict[src] = deque()
+
+        track = tracking_dict[src]
+        track.append(now)
+
+        # Prune old entries
+        while track and now - track[0] > 5.0:
+            track.popleft()
+
+        if len(track) > threshold:
+            msg = f"{label}: Potential attack from {src} ({len(track)} events in 5s)"
+            if msg not in self.history:
+                self.history.add(msg)
+                self.alert_cb(msg)
+
     def audit_tls(self, summary: Dict[str, Any]) -> None:
-        """Surface alerts for expired / self-signed certs seen in TLS traffic."""
+        """Surface alerts for expired / self‑signed certs (unchanged)."""
         tls_info = summary.get('tls_info') or {}
         sni = tls_info.get('sni') or summary.get('dst', '')
         for cert in tls_info.get('certs', []):
@@ -1388,10 +1511,10 @@ class ThreatAuditor:
                 self.alert_cb(f"CERT EXPIRED: {sni} ({subj})")
             if cert.get('is_self_signed') and key not in self.selfsigned_cert_history:
                 self.selfsigned_cert_history.add(key)
-                self.alert_cb(f"SELF-SIGNED CERT: {sni} ({subj})")
+                self.alert_cb(f"SELF‑SIGNED CERT: {sni} ({subj})")
 
     def active_probe(self, target_ip: str, interface: str) -> None:
-        """Send a raw ARP request to verify a host's current MAC binding."""
+        """Send ARP probe (unchanged)."""
         try:
             sha = get_iface_mac(interface)
             spa = get_iface_ip(interface)
@@ -1421,7 +1544,7 @@ class ThreatAuditor:
                 except Exception as e2:
                     self.alert_cb(f"[!] Probe failed: {e2}")
             else:
-                self.alert_cb(f"[!] Probe failed: {e} (install scapy for a fallback)")
+                self.alert_cb(f"[!] Probe failed: {e} (install scapy for fallback)")
 
 
 # ==============================================================================
@@ -1429,13 +1552,13 @@ class ThreatAuditor:
 # ==============================================================================
 
 class VimSharkApp:
-    """Top-level TUI application: owns the capture thread, packet store,
+    """Top‑level TUI application: owns the capture thread, packet store,
     urwid widget tree, and input dispatch."""
 
     def __init__(self, interface: str = "eth0", read_pcap: Optional[str] = None,
                  write_pcap: Optional[str] = None, max_packets: int = 5000,
                  batch_size: int = 100, max_rate: float = 0.0,
-                 max_display: int = 500, theme: str = "btop_classic"):
+                 max_display: int = 500, theme: str = "btop_classic", scan_threshold: int = 12):
         self.interface = interface
         self.read_pcap = read_pcap
         self.write_pcap = write_pcap
@@ -1446,13 +1569,13 @@ class VimSharkApp:
 
         self.telemetry = TrafficTelemetry()
         self.dissector = FastDissector()
+        self.pkt_queue: "queue.Queue[int]" = queue.Queue()
+        self.alert_queue: "queue.Queue[str]" = queue.Queue()
         self.auditor = ThreatAuditor(self.queue_alert)
+        self.auditor.port_scan_unique_threshold = scan_threshold
         self.reassembler = IPReassembler()
         self.flow_tracker = FlowTracker()
         self.store = PacketStore(max_packets=max_packets)
-
-        self.pkt_queue: "queue.Queue[int]" = queue.Queue()
-        self.alert_queue: "queue.Queue[str]" = queue.Queue()
 
         self.is_running = True
         self.paused = False
@@ -1504,13 +1627,13 @@ class VimSharkApp:
         self.right_pane = urwid.Pile([
             ('weight', 3, urwid.LineBox(urwid.ListBox(self.det_walker), title="Dissection")),
             ('weight', 2, urwid.LineBox(urwid.ListBox(self.hex_walker), title="Hex Dump")),
-            ('weight', 1, urwid.LineBox(urwid.ListBox(self.alrt_walker), title="Security Alerts")),
+            ('weight', 1, urwid.LineBox(urwid.ListBox(self.alrt_walker), title="Security")),
         ])
 
         self.body = urwid.Columns([('weight', 3, self.left_pane), ('weight', 2, self.right_pane)], dividechars=1)
         self.footer = urwid.Text(
             " [Q]uit [T]heme [P]ause [F]ollow [S]earch Hex [E]xport [V]alidate "
-            "[C]lear [L]Flows [/]Filter"
+            " [C]lear [L]Flows [A]uditor [/]Filter"
         )
         self.root = urwid.Frame(
             urwid.AttrMap(self.body, 'bg'),
@@ -1557,6 +1680,8 @@ class VimSharkApp:
         if summary.get('creds'):
             markers.append('!')
         tls_info = summary.get('tls_info') or {}
+        if tls_info.get('alert'):
+            markers.append('⚠')
         if tls_info.get('ja3') and tls_info['ja3'] != "N/A":
             markers.append('J')
         if tls_info.get('certs'):
@@ -1571,7 +1696,7 @@ class VimSharkApp:
             f"{summary['proto']:<7} | {summ_text}"
         )
         btn = urwid.Button(line)
-        btn._pkt_idx = idx  # lightweight int reference only - no raw bytes/dpkt objects
+        btn._pkt_idx = idx  # lightweight int reference only
         urwid.connect_signal(btn, 'click', self.on_packet_click)
         return urwid.AttrMap(btn, attr, 'text_focus')
 
@@ -1592,7 +1717,7 @@ class VimSharkApp:
             urwid.Text(""),
         ]
 
-        # ------------------------------------------------ Core protocol layers
+        # Core protocol layers
         for layer_name, fields in info.get('layers', []):
             details.append(urwid.AttrMap(urwid.Text(f"-- {layer_name} --"), 'border'))
             for k, v in fields.items():
@@ -1601,7 +1726,7 @@ class VimSharkApp:
                 sval = FastDissector._safe_str(v, 90)
                 details.append(urwid.Text(f"  {k:<18}: {sval}"))
 
-        # ------------------------------------------------ TLS / SSL section
+        # TLS / SSL section
         tls_info = info.get('tls_info', {})
         if tls_info and tls_info.get('handshake_type') != "Unknown":
             details.append(urwid.Text(""))
@@ -1614,8 +1739,10 @@ class VimSharkApp:
                     ver_text += " (negotiating TLS 1.3)"
                 details.append(urwid.Text(f"  Version      : {ver_text}"))
 
-            if tls_info.get('cipher_name'):
-                details.append(urwid.Text(f"  Cipher Suite : {tls_info['cipher_name']}"))
+            if tls_info.get('cipher'):
+                cipher_id = tls_info['cipher']
+                name = FastDissector._CIPHER_SUITES.get(cipher_id, "UNKNOWN")
+                details.append(urwid.Text(f"  Cipher Suite : 0x{cipher_id:04x} ({name})"))
 
             if tls_info.get('sni'):
                 details.append(urwid.Text(f"  SNI          : {tls_info['sni']}"))
@@ -1627,22 +1754,20 @@ class VimSharkApp:
                 details.append(urwid.AttrMap(
                     urwid.Text(f"  TLS Alert    : {tls_info['alert']}"), 'warn'))
 
-            # ---- JA3 (client fingerprint) ----
+            # JA3 (client fingerprint)
             ja3 = tls_info.get('ja3')
             if ja3 and ja3 != "N/A":
                 details.append(urwid.AttrMap(urwid.Text(f"  JA3          : {ja3}"), 'ja3'))
                 ja3i = tls_info.get('ja3_info', {})
                 if ja3i.get('ciphers'):
-                    details.append(urwid.Text(
-                        f"    Ciphers    : {len(ja3i['ciphers'])} offered"))
+                    details.append(urwid.Text(f"    Ciphers    : {len(ja3i['ciphers'])} offered"))
                 if ja3i.get('curves'):
-                    details.append(urwid.Text(
-                        f"    Curves     : {'-'.join(map(str, ja3i['curves']))}"))
+                    details.append(urwid.Text(f"    Curves     : {'-'.join(map(str, ja3i['curves']))}"))
                 if ja3i.get('supported_versions'):
                     vnames = [_TLS_VERSION_NAMES.get(v, f"0x{v:04x}") for v in ja3i['supported_versions']]
                     details.append(urwid.Text(f"    Offers     : {', '.join(vnames)}"))
 
-            # ---- JA3S (server fingerprint) ----
+            # JA3S (server fingerprint)
             ja3s = tls_info.get('ja3s')
             if ja3s and ja3s != "N/A":
                 details.append(urwid.AttrMap(urwid.Text(f"  JA3S         : {ja3s}"), 'ja3'))
@@ -1650,7 +1775,7 @@ class VimSharkApp:
             if tls_info.get('ocsp_stapled'):
                 details.append(urwid.AttrMap(urwid.Text("  OCSP Stapling: Present"), 'good'))
 
-            # ---- Certificates ----
+            # Certificates
             certs = tls_info.get('certs', [])
             if certs:
                 details.append(urwid.Text(""))
@@ -1681,7 +1806,7 @@ class VimSharkApp:
                     if cert.get('is_not_yet_valid'):
                         details.append(urwid.AttrMap(urwid.Text("    [!] CERTIFICATE NOT YET VALID"), 'warn'))
                     if cert.get('is_self_signed'):
-                        details.append(urwid.AttrMap(urwid.Text("    [!] Self-Signed Certificate"), 'warn'))
+                        details.append(urwid.AttrMap(urwid.Text("    [!] Self‑Signed Certificate"), 'warn'))
 
                     if cert.get('pubkey_algorithm'):
                         details.append(urwid.Text(f"    Public Key: {cert['pubkey_algorithm']}"))
@@ -1708,7 +1833,7 @@ class VimSharkApp:
                     if cert.get('crl_distribution_points'):
                         details.append(urwid.Text(f"    CRL       : {cert['crl_distribution_points'][0]}"))
 
-        # ------------------------------------------------ Credential warnings
+        # Credential warnings
         if info.get('creds'):
             details.append(urwid.Text(""))
             details.append(urwid.AttrMap(urwid.Text("!! POTENTIAL CREDENTIAL EXPOSURE !!"), 'warn'))
@@ -1810,7 +1935,7 @@ class VimSharkApp:
                 time.sleep(0.1)
 
     def _process_packet(self, data: bytes, header: Any) -> None:
-        """Dissect a single raw frame, store it, and queue follow-up work
+        """Dissect a single raw frame, store it, and queue follow‑up work
         (telemetry, flow tracking, security audits, fragment reassembly)."""
         summary = self.dissector.dissect(data)
         ts_sec, ts_usec = header.getts()
@@ -1849,7 +1974,7 @@ class VimSharkApp:
 
     # ----------------------------------------------------------------- tick
     def ui_update_tick(self, loop: urwid.MainLoop, _user_data: Any) -> None:
-        """Main-thread heartbeat: drains queues in batches, updates telemetry."""
+        """Main‑thread heartbeat: drains queues in batches, updates telemetry."""
         new_rows = []
         processed = 0
         while processed < self.batch_size:
@@ -1915,6 +2040,14 @@ class VimSharkApp:
             self.flow_tracker.clear()
             self.walker[:] = []
             self.update_hex_view()
+            # Reset auditor state on manual clear
+            self.auditor.history.clear()
+            self.auditor.expired_cert_history.clear()
+            self.auditor.selfsigned_cert_history.clear()
+            self.auditor.icmp_tracking.clear()
+            self.auditor.syn_tracking.clear()
+            self.auditor.scan_tracking.clear()
+            self.auditor.incremental_tracking.clear()
         elif key == '/':
             self.root.focus_position = 'body'
             self.body.focus_position = 0
@@ -1930,6 +2063,8 @@ class VimSharkApp:
             self.follow_stream()
         elif key in ('l', 'L'):
             self.show_flows_modal()
+        elif key in ('a', 'A'):
+            self.show_auditor_modal()
 
     def cycle_theme(self) -> None:
         names = list(THEMES.keys())
@@ -1941,24 +2076,94 @@ class VimSharkApp:
             self.loop.screen.clear()
         self.refresh_display()
 
-    # ------------------------------------------------------------- modals
+    # --------------------------------------------------------------------- AUDITOR UI
+    def _auditor_status(self) -> str:
+        """Return a short status string used in the footer."""
+        parts = []
+        if self.auditor.arp_auditor_enabled:
+            parts.append('ARP')
+        if self.auditor.port_scan_enabled:
+            parts.append('PORT‑SCAN')
+        if self.auditor.syn_auditor_enabled:
+            parts.append('SYN')
+        if self.auditor.icmp_auditor_enabled:
+            parts.append('ICMP')
+        return ', '.join(parts) or 'none'
+
+    def _update_footer(self) -> None:
+        """Re‑build the footer text so the toggle status is always visible."""
+        base = " [Q]uit [T]heme [P]ause [F]ollow [S]earch Hex [E]xport [V]alidate " \
+               "[C]lear [L]Flows [A]uditor [/]Filter"
+        status = f"  Enabled: {self._auditor_status()}"
+        self.footer.set_text(base + status)
+
+    def show_auditor_modal(self) -> None:
+        """Overlay with check‑boxes for each audit component."""
+        cb_arp   = urwid.CheckBox('ARP Spoof Detector', state=self.auditor.arp_auditor_enabled)
+        cb_port  = urwid.CheckBox('Port‑Scan Detector', state=self.auditor.port_scan_enabled)
+        cb_syn   = urwid.CheckBox('TCP SYN‑Flood Detector', state=self.auditor.syn_auditor_enabled)
+        cb_icmp  = urwid.CheckBox('ICMP Flood Detector', state=self.auditor.icmp_auditor_enabled)
+        ok_btn   = urwid.Button('OK')
+        cancel   = urwid.Button('Cancel')
+
+        def apply(_b):
+            self.auditor.arp_auditor_enabled   = cb_arp.get_state()
+            self.auditor.port_scan_enabled      = cb_port.get_state()
+            self.auditor.syn_auditor_enabled    = cb_syn.get_state()
+            self.auditor.icmp_auditor_enabled   = cb_icmp.get_state()
+            self._update_footer()
+            self._close_overlay()
+
+        urwid.connect_signal(ok_btn,    'click', apply)
+        urwid.connect_signal(cancel,    'click', self._close_overlay)
+
+        pile = urwid.Pile([
+            urwid.Text('--- Security Auditor Settings ---', align='center'),
+            urwid.Divider(),
+            cb_arp, cb_port, cb_syn, cb_icmp,
+            urwid.Divider(),
+            urwid.Columns([ok_btn, cancel])
+        ])
+        overlay = urwid.Overlay(
+            urwid.LineBox(urwid.Filler(pile), title='Auditor Settings'),
+            self.root.body, 'center', 48, 'middle', 16
+        )
+        self.root.body = overlay
+
     def _close_overlay(self, *_args) -> None:
         self.root.body = urwid.AttrMap(self.body, 'bg')
 
+    # ------------------------------------------------------------- modals (export / hex / validation / flows)
     def show_validation_modal(self) -> None:
         edit = urwid.Edit("Target IP: ", "192.168.1.1")
+        cb_arp = urwid.CheckBox("Passive ARP Validator", state=self.auditor.arp_auditor_enabled)
+        cb_scan = urwid.CheckBox("Port Scan Detection", state=self.auditor.port_scan_enabled)
         btn = urwid.Button("Dispatch Probe")
         cancel = urwid.Button("Cancel")
 
         def go(_b):
+            self.auditor.arp_auditor_enabled = cb_arp.get_state()
+            self.auditor.port_scan_enabled = cb_scan.get_state()
             self.auditor.active_probe(edit.get_edit_text(), self.interface)
             self._close_overlay()
 
         urwid.connect_signal(btn, 'click', go)
         urwid.connect_signal(cancel, 'click', self._close_overlay)
+
+        pile = urwid.Pile([
+            urwid.Text("--- Security Configuration ---"),
+            urwid.Divider(),
+            cb_arp,
+            cb_scan,
+            urwid.Divider(),
+            urwid.Text("--- Active ARP Probe ---"),
+            edit,
+            urwid.Columns([btn, cancel])
+        ])
+
         overlay = urwid.Overlay(
-            urwid.LineBox(urwid.Filler(urwid.Pile([edit, btn, cancel])), title="Active ARP Probe"),
-            self.root.body, 'center', 40, 'middle', 9
+            urwid.LineBox(urwid.Filler(pile), title="Security Validator"),
+            self.root.body, 'center', 48, 'middle', 13
         )
         self.root.body = overlay
 
@@ -1979,6 +2184,7 @@ class VimSharkApp:
         urwid.connect_signal(btn, 'click', do_search)
         urwid.connect_signal(clear, 'click', do_clear)
         urwid.connect_signal(cancel, 'click', self._close_overlay)
+
         overlay = urwid.Overlay(
             urwid.LineBox(
                 urwid.Filler(urwid.Pile([edit, urwid.Divider(), urwid.Columns([btn, clear, cancel])])),
@@ -2000,6 +2206,7 @@ class VimSharkApp:
 
         urwid.connect_signal(btn, 'click', do_export)
         urwid.connect_signal(cancel, 'click', self._close_overlay)
+
         overlay = urwid.Overlay(
             urwid.LineBox(urwid.Filler(urwid.Pile([edit, urwid.Divider(), btn, cancel])), title="Export Filtered Traffic"),
             self.root.body, 'center', 45, 'middle', 9
@@ -2136,7 +2343,6 @@ class VimSharkApp:
                 if not p_data.data:
                     continue
 
-                # Extract raw bytes from payload (handles sub-parsed protocol objects)
                 payload = p_data.data
                 if not isinstance(payload, bytes):
                     try:
@@ -2195,9 +2401,6 @@ class VimSharkApp:
             logger.info("vimShark shut down cleanly")
 
 
-# Backwards-compatible alias for the old class name
-vimSharkApp = VimSharkApp
-
 
 # ==============================================================================
 # ENTRY POINT
@@ -2208,16 +2411,35 @@ def main() -> None:
     parser.add_argument("-i", "--interface", default="eth0", help="Capture interface")
     parser.add_argument("-r", "--read", help="Read from a PCAP file instead of live capture")
     parser.add_argument("-o", "--output", help="Write captured packets to a PCAP file")
-    parser.add_argument("-b", "--buffer", type=int, default=5000, help="Packet store capacity (ring buffer size)")
-    parser.add_argument("--batch-size", type=int, default=100, help="Max packets drained from queue per UI tick")
-    parser.add_argument("--max-rate", type=float, default=0.0, help="Throttle: max packets/sec to process (0 = unlimited)")
-    parser.add_argument("--max-display", type=int, default=500, help="Max rows kept in the visible traffic list")
-    parser.add_argument("--theme", default="btop_classic", choices=list(THEMES.keys()), help="Initial color theme")
-    parser.add_argument("--log-level", default="WARNING", choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-                         help="Log verbosity (written to vimshark.log)")
+    parser.add_argument("-b", "--buffer", type=int, default=5000,
+                        help="Packet store capacity (ring buffer size)")
+    parser.add_argument("--scan-threshold", type=int, default=12,
+                        help="Threshold for scan detection.")
+    parser.add_argument("--batch-size", type=int, default=100,
+                        help="Max packets drained from queue per UI tick")
+    parser.add_argument("--max-rate", type=float, default=0.0,
+                        help="Throttle: max packets/sec to process (0 = unlimited)")
+    parser.add_argument("--max-display", type=int, default=500,
+                        help="Max rows kept in the visible traffic list")
+    parser.add_argument("--theme", default="btop_classic",
+                        choices=list(THEMES.keys()), help="Initial color theme")
+    parser.add_argument("--log-level", default="WARNING",
+                        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+                        help="Log verbosity (written to vimshark.log)")
+    parser.add_argument("--credits",action="store_true",help="Shows credits & exits.")
     args = parser.parse_args()
 
     logger.setLevel(getattr(logging, args.log_level))
+    
+    if args.credits:
+        banner = [
+
+        ]
+        lines = [
+            "Developed"
+        ]
+        print("\n".join(lines))
+        sys.exit(0)
 
     if not CRYPTOGRAPHY_AVAILABLE:
         logger.warning("'cryptography' not installed - certificate parsing will be limited to SHA fingerprints")
@@ -2231,6 +2453,7 @@ def main() -> None:
         max_rate=args.max_rate,
         max_display=args.max_display,
         theme=args.theme,
+        scan_threshold=args.scan_threshold,
     )
     app.run()
 
