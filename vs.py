@@ -44,6 +44,29 @@ __author__ = "J4ck3LSyN"
 logging.basicConfig(filename=os.path.join(SCRIPT_DIR, "vimshark.log"),level=logging.WARNING,format="%(asctime)s [%(levelname)s] %(message)s",)
 logger = logging.getLogger("vimshark")
 THEMES:Dict[str, List[Tuple]] = {
+    "y_researchers": [
+        ('bg', 'default', 'default', 'default', '#F5F7FA', '#05070A'),
+        ('header', 'white', 'light blue', 'bold', '#F5F7FA', '#1E6BFF'),
+        ('footer', 'light gray', 'black', None, '#AEB6C2', '#061A3A'),
+        ('border', 'dark magenta', 'default', 'default', '#8A2CFF', '#05070A'),
+        ('selected', 'black', 'light green', 'standout', '#05070A', '#39FF88'),
+        ('pkt_tcp', 'light cyan', 'default', 'default', '#00C8FF', '#05070A'),
+        ('pkt_udp', 'light magenta', 'default', 'default', '#FF3BBE', '#14000D'),
+        ('pkt_arp', 'yellow', 'default', 'default', '#FFD84D', '#05070A'),
+        ('pkt_dns', 'light cyan', 'default', 'default', '#9FD8FF', '#05070A'),
+        ('pkt_icmp', 'light red', 'default', 'default', '#E0182D', '#052E1A'),
+        ('pkt_icmp6', 'light red', 'default', 'default', '#E0182D', '#052E1A'),
+        ('pkt_http', 'light green', 'default', 'default', '#39FF88', '#05070A'),
+        ('pkt_tls', 'light blue', 'default', 'default', '#1E6BFF', '#05070A'),
+        ('pkt_ntp', 'yellow', 'default', 'default', '#FFD84D', '#05070A'),
+        ('pkt_other', 'light gray', 'default', 'default', '#6B7280', '#05070A'),
+        ('spark_bar', 'light green', 'default', None, '#39FF88', '#05070A'),
+        ('text_focus', 'black', 'light magenta', None, '#05070A', '#FF3BBE'),
+        ('warn', 'light red', 'default', 'bold', '#E0182D', '#05070A'),
+        ('good', 'light green', 'default', 'bold', '#39FF88', '#05070A'),
+        ('ja3', 'black', 'yellow', 'standout', '#05070A', '#FFD84D'),
+        ('dim', 'dark gray', 'default', 'default', '#6B7280', '#05070A'),
+    ],
     "nullsecurityx":[
         ('bg', 'default', 'default', 'default', '#e0e0e0', '#0a0a0f'),          
         ('header', 'white', 'dark red', 'bold', '#ffffff', '#8b0000'),      
