@@ -39,7 +39,7 @@ try:
     from scapy.all import ARP as ScapyARP, Ether as ScapyEther, srp as scapy_srp;SCAPY_AVAILABLE = True
 except Exception as E: 
     SCAPY_AVAILABLE = False;print(f"[^] Failed to import `scapy` modules.\n\t-> [{str(E.__class__.__name__)}]:\n\t\t- {str(E)}")
-__version__ = "0.2.4"
+__version__ = "0.2.5"
 __author__ = "J4ck3LSyN"
 logging.basicConfig(filename=os.path.join(SCRIPT_DIR, "vimshark.log"),level=logging.WARNING,format="%(asctime)s [%(levelname)s] %(message)s",)
 logger = logging.getLogger("vimshark")
@@ -49,7 +49,9 @@ THEMES:Dict[str, List[Tuple]] = {
         ('header', 'white', 'light blue', 'bold', '#F5F7FA', '#1E6BFF'),
         ('footer', 'light gray', 'black', None, '#AEB6C2', '#061A3A'),
         ('border', 'dark magenta', 'default', 'default', '#8A2CFF', '#05070A'),
+
         ('selected', 'black', 'light green', 'standout', '#05070A', '#39FF88'),
+
         ('pkt_tcp', 'light cyan', 'default', 'default', '#00C8FF', '#05070A'),
         ('pkt_udp', 'light magenta', 'default', 'default', '#FF3BBE', '#14000D'),
         ('pkt_arp', 'yellow', 'default', 'default', '#FFD84D', '#05070A'),
@@ -60,6 +62,7 @@ THEMES:Dict[str, List[Tuple]] = {
         ('pkt_tls', 'light blue', 'default', 'default', '#1E6BFF', '#05070A'),
         ('pkt_ntp', 'yellow', 'default', 'default', '#FFD84D', '#05070A'),
         ('pkt_other', 'light gray', 'default', 'default', '#6B7280', '#05070A'),
+
         ('spark_bar', 'light green', 'default', None, '#39FF88', '#05070A'),
         ('text_focus', 'black', 'light magenta', None, '#05070A', '#FF3BBE'),
         ('warn', 'light red', 'default', 'bold', '#E0182D', '#05070A'),
@@ -253,9 +256,8 @@ THEMES:Dict[str, List[Tuple]] = {
     ],
 }
 
-# ==============================================================================
-# UTILITIES
-# ==============================================================================
+# -----------------------------------------------------------------
+# Utils
 
 def mac_to_str(address: bytes) -> str:
     return ':'.join('%02x' % b for b in address)
@@ -330,9 +332,8 @@ def fmt_ts(iso_dt: Optional[str]) -> str:
     return iso_dt.replace("T", " ").split("+")[0].split(".")[0] + "Z"
 
 
-# ==============================================================================
-# TRAFFIC TELEMETRY
-# ==============================================================================
+# -----------------------------------------------------------------
+# Traffic Telemetry
 
 class TrafficTelemetry:
     """Tracks rolling packet/byte rates with EMA smoothing and sparkline history."""
@@ -392,9 +393,8 @@ class TrafficTelemetry:
         return "".join(self.blocks[min(7, int(v * 7 / m_max))] for v in h)
 
 
-# ==============================================================================
-# PACKET STORE
-# ==============================================================================
+# -----------------------------------------------------------------
+# Packet Store
 
 class PacketStore:
     """Owns all captured packet bytes/summaries. Capture thread writes via
@@ -438,9 +438,9 @@ class PacketStore:
             return len(self._order)
 
 
-# ==============================================================================
-# DISSECTION ENGINE (v0.3 - Enhanced TLS + JA3/JA3S + Certificate Intelligence)
-# ==============================================================================
+# -----------------------------------------------------------------
+# Dissection Engine (v0.3 - Enhanced TLS + JA3/JA3S + Certificate Intelligence)
+
 
 # GREASE values (RFC 8701) must be ignored when computing JA3/JA3S
 _GREASE_VALUES: FrozenSet[int] = frozenset({
@@ -499,7 +499,8 @@ class FastDissector:
         (re.compile(rb'(?i)api[-_]?key[:=]\s*\S+'), 'API Key'),
     ]
 
-    # --------------------------------------------------------------- helpers
+    # --------------------------------------------------------------- 
+    # helpers
 
     @staticmethod
     def _scan_credentials(data: bytes) -> List[str]:
@@ -581,7 +582,8 @@ class FastDissector:
         except Exception:
             return f"<unprintable {type(val).__name__}>"
 
-    # ====================== TLS EXTENSION PARSING ======================
+    # -----------------------------------------------------------------
+    # TLS Extensions & Parsing
 
     @staticmethod
     def _parse_extension_data(ext_type: int, data: bytes, ja3_info: Dict[str, Any]) -> None:
@@ -645,7 +647,8 @@ class FastDissector:
         except Exception as e:
             logger.debug("extension parse error (type=%s): %s", ext_type, e)
 
-    # ====================== JA3 / JA3S FINGERPRINTING ======================
+    # -----------------------------------------------------------------
+    # JA3 / JA3S Fingerprinting
 
     @staticmethod
     def _parse_ja3_client_hello(handshake) -> Dict[str, Any]:
@@ -718,7 +721,8 @@ class FastDissector:
 
         return ja3s_info
 
-    # ====================== CERTIFICATE PARSING ======================
+    # -----------------------------------------------------------------
+    # Certificate Parsing
 
     @staticmethod
     def _parse_tls_cert(cert_der: bytes) -> Dict[str, Any]:
@@ -827,7 +831,8 @@ class FastDissector:
 
         return info
 
-    # ====================== TLS HANDSHAKE PARSING ======================
+    # -----------------------------------------------------------------
+    # TLS Handshake Parsing
 
     @staticmethod
     def _parse_tls_handshake(tcp_payload: bytes) -> Dict[str, Any]:
@@ -977,7 +982,8 @@ class FastDissector:
 
         return result
 
-    # ====================== LAYER WALKING ======================
+    # -----------------------------------------------------------------
+    # Layer Walking
 
     @staticmethod
     def _dissect_layer(layer: Any, depth: int = 0) -> List[Tuple[str, Dict[str, Any]]]:
@@ -1014,8 +1020,6 @@ class FastDissector:
             logger.debug("layer dissection error: %s", e)
 
         return layers
-
-    # ====================== MAIN ENTRY POINT ======================
 
     @staticmethod
     def dissect(raw_pkt: bytes) -> Dict[str, Any]:
@@ -1162,9 +1166,8 @@ class FastDissector:
         return "\n".join(lines)
 
 
-# ==============================================================================
-# IP REASSEMBLER
-# ==============================================================================
+# -----------------------------------------------------------------
+# IP Reassembler
 
 class IPReassembler:
     """Stateful IPv4 fragmentation reassembler with expiry of stale buffers."""
@@ -1182,9 +1185,8 @@ class IPReassembler:
         for k in expired:
             self._clear(k)
 
-        # Fragment offset is in 8‑byte units
-        offset = (ip.off & dpkt.ip.IP_OFFMASK) * 8
-        mf = bool(ip.off & dpkt.ip.IP_MF)
+        mf = getattr(ip, 'mf', False) or bool(getattr(ip, 'off', 0) & dpkt.ip.IP_MF)
+        offset = getattr(ip, 'offset', 0) * 8
 
         key = (ip.src, ip.dst, ip.p, ip.id)
         self.timestamps[key] = now
@@ -1215,9 +1217,8 @@ class IPReassembler:
         self.timestamps.pop(key, None)
 
 
-# ==============================================================================
-# FLOW TRACKER
-# ==============================================================================
+# -----------------------------------------------------------------
+# Flow Tracker
 
 class FlowTracker:
     """Lightweight bidirectional flow table. Tracks per‑flow packet/byte
@@ -1259,9 +1260,8 @@ class FlowTracker:
         self.flows.clear()
 
 
-# ==============================================================================
-# FILTER EXPRESSIONS
-# ==============================================================================
+# -----------------------------------------------------------------
+# Filter Expressions
 
 _COND_RE = re.compile(r'^\s*(\w+)\s*(==|!=)\s*(\S+)\s*$')
 
@@ -1367,9 +1367,8 @@ def compile_filter(expr: str) -> Callable[[Dict[str, Any]], bool]:
         return fallback
 
 
-# ==============================================================================
-# THREAT AUDITOR
-# ==============================================================================
+# -----------------------------------------------------------------
+# Threat Auditor
 
 class ThreatAuditor:
     """Lightweight passive + active security checks with improved port scan detection."""
@@ -1384,14 +1383,19 @@ class ThreatAuditor:
         # Tracking structures
         self.icmp_tracking: Dict[str, deque] = {}
         self.syn_tracking: Dict[str, deque] = {}
-        self.scan_tracking: Dict[str, deque] = {}                    # src -> deque of (timestamp, dport)
+        self.scan_tracking: Dict[str, deque] = {} # src -> deque of (timestamp, dport)
         self.incremental_tracking: Dict[Tuple[str, str], Dict[str, Any]] = {}
+
+        # Host Scanning
+        self.host_scan_tracking:Dict[str,deque]={}
+        self.arp_scan_tracking:Dict[str,deque]={}
 
         # Configuration
         self.arp_auditor_enabled = True
         self.port_scan_enabled: bool = True
         self.syn_auditor_enabled = True
         self.icmp_auditor_enabled = True
+        self.host_scan_enabled = True
 
         # Port‑scan tuning – the defaults are now low enough to catch a normal
         # nmap “‑T4” sweep out‑of‑the‑box.  Users can still override them via the
@@ -1400,16 +1404,21 @@ class ThreatAuditor:
         self.port_scan_sequential_threshold: int = 8   # consecutive ports → “sequential”
         self.port_scan_window: float = 10.0            # seconds
 
+        self.host_scan_threshold: int = 15          # unique hosts pinged in window
+        self.host_scan_window: float = 8.0          # seconds
+
     def audit_packet(self, raw_pkt: bytes) -> None:
         """Main entry point for packet auditing."""
         try:
             eth = dpkt.ethernet.Ethernet(raw_pkt)
 
-            # ARP Spoofing Detection
+            # ARP Handling: Spoof Detection + Host Scan Detection
             if isinstance(eth.data, dpkt.arp.ARP):
                 if not self.arp_auditor_enabled:
                     return
                 arp = eth.data
+
+                # ARP Reply → Spoofing detection
                 if arp.op == dpkt.arp.ARP_OP_REPLY:
                     ip_addr = ip_to_str(arp.spa)
                     mac = mac_to_str(arp.sha)
@@ -1421,21 +1430,33 @@ class ThreatAuditor:
                             self.alert_cb(msg)
                     self.arp_table[ip_addr] = mac
 
-            # IP‑based traffic
+                # ARP Request → Host Scan Detection (NEW)
+                elif arp.op == dpkt.arp.ARP_OP_REQUEST and self.host_scan_enabled:
+                    src_mac = mac_to_str(arp.sha)
+                    target_ip = ip_to_str(arp.tpa)
+                    # Ignore obvious broadcast / invalid targets
+                    if target_ip not in ("0.0.0.0", "255.255.255.255"):
+                        self._audit_host_scan(src_mac, target_ip, scan_type="ARP")
+
+            # IP‑based traffic (ICMP, TCP, UDP, etc.)
             elif isinstance(eth.data, (dpkt.ip.IP, dpkt.ip6.IP6)):
                 ip = eth.data
                 src_ip = ip6_to_str(ip.src) if isinstance(ip, dpkt.ip6.IP6) else ip_to_str(ip.src)
+
+                # === ICMP Host Scan Detection ===
+                if self.host_scan_enabled and isinstance(ip.data, dpkt.icmp.ICMP):
+                    icmp = ip.data
+                    if icmp.type == 8:  # Echo Request (Ping)
+                        dst_ip = ip6_to_str(ip.dst) if isinstance(ip, dpkt.ip6.IP6) else ip_to_str(ip.dst)
+                        self._audit_host_scan(src_ip, dst_ip, scan_type="ICMP")
 
                 if isinstance(ip.data, (dpkt.tcp.TCP, dpkt.udp.UDP)):
                     transport = ip.data
                     proto = "TCP" if isinstance(transport, dpkt.tcp.TCP) else "UDP"
 
-                    # ==== PORT‑SCAN ==== (run for *any* transport)
                     if self.port_scan_enabled:
-                        self._audit_port_scan(src_ip, transport.dport,
-                                              "TCP" if isinstance(transport, dpkt.tcp.TCP) else "UDP")
+                        self._audit_port_scan(src_ip, transport.dport, proto)
 
-                    # ==== TCP SYN FLOOD ====
                     if isinstance(transport, dpkt.tcp.TCP) and self.syn_auditor_enabled:
                         if (transport.flags & dpkt.tcp.TH_SYN) and not (transport.flags & dpkt.tcp.TH_ACK):
                             self._audit_flood(src_ip, self.syn_tracking, "TCP SYN FLOOD", 50)
@@ -1502,6 +1523,39 @@ class ThreatAuditor:
 
             state['last'] = dport
             state['time'] = now
+
+    def _audit_host_scan(self, src: str, dst: str, scan_type: str = "ICMP") -> None:
+        """Detect host scanning via ICMP or ARP (nmap -sn, fing, wifimon, etc.)."""
+        if not self.host_scan_enabled:
+            return
+
+        now = time.time()
+
+        # Select appropriate tracking structure and window
+        if scan_type == "ARP":
+            tracking = self.arp_scan_tracking
+            window = self.host_scan_window * 1.25  # ARP scans tend to be burstier
+        else:
+            tracking = self.host_scan_tracking
+            window = self.host_scan_window
+
+        if src not in tracking:
+            tracking[src] = deque(maxlen=120)
+
+        track = tracking[src]
+        track.append((now, dst))
+
+        # Prune old entries
+        while track and now - track[0][0] > window:
+            track.popleft()
+
+        unique_hosts = {p[1] for p in track}
+        if len(unique_hosts) >= self.host_scan_threshold:
+            msg = (f"HOST SCAN: {src} probed {len(unique_hosts)} unique hosts "
+                   f"in last {window:.1f}s ({scan_type} Discovery)")
+            if msg not in self.history:
+                self.history.add(msg)
+                self.alert_cb(msg)
 
     def _audit_flood(self, src: str, tracking_dict: Dict[str, deque], label: str, threshold: int) -> None:
         """Generic flood detection using sliding window."""
@@ -1570,9 +1624,8 @@ class ThreatAuditor:
                 self.alert_cb(f"[!] Probe failed: {e} (install scapy for fallback)")
 
 
-# ==============================================================================
-# CORE APPLICATION
-# ==============================================================================
+# -----------------------------------------------------------------
+# Core
 
 class VimSharkApp:
     """Top‑level TUI application: owns the capture thread, packet store,
@@ -1596,6 +1649,7 @@ class VimSharkApp:
         self.alert_queue: "queue.Queue[str]" = queue.Queue()
         self.auditor = ThreatAuditor(self.queue_alert)
         self.auditor.port_scan_unique_threshold = scan_threshold
+        self.auditor.host_scan_enabled = True
         self.reassembler = IPReassembler()
         self.flow_tracker = FlowTracker()
         self.store = PacketStore(max_packets=max_packets)
@@ -1612,7 +1666,8 @@ class VimSharkApp:
 
         self.setup_ui()
 
-    # ------------------------------------------------------------------ UI
+    # ------------------------------------------------------------------ 
+    # UI
     def setup_ui(self) -> None:
         self._theme_attrs = {entry[0] for entry in THEMES[self.current_theme]}
 
@@ -1664,11 +1719,13 @@ class VimSharkApp:
             footer=urwid.AttrMap(self.footer, 'footer'),
         )
 
-    # --------------------------------------------------------------- alerts
+    # --------------------------------------------------------------- 
+    # alerts
     def queue_alert(self, msg: str) -> None:
         self.alert_queue.put(msg)
 
-    # --------------------------------------------------------------- filter
+    # --------------------------------------------------------------- 
+    # filter
     def on_filter_change(self, widget: urwid.Edit, text: str) -> None:
         self.display_filter = text
         self.filter_fn = compile_filter(text)
@@ -1689,7 +1746,8 @@ class VimSharkApp:
             new_rows = new_rows[-self.max_display:]
         self.walker[:] = new_rows
 
-    # ----------------------------------------------------------- row build
+    # ----------------------------------------------------------- 
+    # row build
     def build_row(self, idx: int, summary: Dict[str, Any]) -> urwid.AttrMap:
         proto = summary['proto'].lower()
         attr = f"pkt_{proto}" if f"pkt_{proto}" in self._theme_attrs else "pkt_other"
@@ -1723,7 +1781,8 @@ class VimSharkApp:
         urwid.connect_signal(btn, 'click', self.on_packet_click)
         return urwid.AttrMap(btn, attr, 'text_focus')
 
-    # ------------------------------------------------------------- details
+    # ------------------------------------------------------------- 
+    # details
     def on_packet_click(self, btn: urwid.Button) -> None:
         idx = getattr(btn, '_pkt_idx', None)
         if idx is None:
@@ -1898,7 +1957,8 @@ class VimSharkApp:
                 new_hex_rows.append(urwid.Text(line))
         self.hex_walker[:] = new_hex_rows
 
-    # --------------------------------------------------------------- capture
+    # --------------------------------------------------------------- 
+    # capture
     def capture_loop(self) -> None:
         """Background thread: capture, dissect, store, enqueue index only.
         Never touches urwid widgets directly."""
@@ -1978,24 +2038,48 @@ class VimSharkApp:
             eth = dpkt.ethernet.Ethernet(data)
             if isinstance(eth.data, dpkt.ip.IP):
                 ip = eth.data
-                if ip.off & (dpkt.ip.IP_MF | dpkt.ip.IP_OFFMASK):
+                
+                # Modern dpkt fragment detection (avoids deprecated ip.off completely)
+                is_fragmented = False
+                
+                # Preferred modern attributes
+                if hasattr(ip, 'mf') and getattr(ip, 'mf', 0) != 0:
+                    is_fragmented = True
+                elif hasattr(ip, 'offset') and getattr(ip, 'offset', 0) > 0:
+                    is_fragmented = True
+                
+                if is_fragmented:
                     full_payload = self.reassembler.process(ip)
                     if full_payload:
+                        # Reassemble
                         ip.data = full_payload
-                        ip.off = 0
-                        ip.len = len(ip)
+                        
+                        # Clear fragment fields safely
+                        if hasattr(ip, 'mf'):
+                            ip.mf = 0
+                        if hasattr(ip, 'offset'):
+                            ip.offset = 0
+                        # Do NOT touch ip.off at all
+                        
+                        # Update length
+                        ip.len = len(ip) if hasattr(ip, 'len') else len(bytes(ip))
+                        
                         eth.data = ip
                         res_raw = bytes(eth)
+                        
                         res_summary = self.dissector.dissect(res_raw)
                         res_summary['summary'] = "[REASSEMBLED] " + res_summary['summary']
+                        
                         res_idx = self.store.add(res_raw, res_summary, ts)
                         self.pkt_queue.put(res_idx)
+                        
                         if res_summary.get('proto') == 'TLS':
                             self.auditor.audit_tls(res_summary)
         except Exception as e:
             logger.debug("reassembly handling error: %s", e)
 
-    # ----------------------------------------------------------------- tick
+    # ----------------------------------------------------------------- 
+    # tick
     def ui_update_tick(self, loop: urwid.MainLoop, _user_data: Any) -> None:
         """Main‑thread heartbeat: drains queues in batches, updates telemetry."""
         new_rows = []
@@ -2048,7 +2132,8 @@ class VimSharkApp:
 
         loop.set_alarm_in(0.05, self.ui_update_tick)
 
-    # --------------------------------------------------------------- input
+    # --------------------------------------------------------------- 
+    # input
     def handle_input(self, key: str) -> None:
         if key in ('q', 'Q', 'esc'):
             self.is_running = False
@@ -2099,7 +2184,8 @@ class VimSharkApp:
             self.loop.screen.clear()
         self.refresh_display()
 
-    # --------------------------------------------------------------------- AUDITOR UI
+    # --------------------------------------------------------------------- 
+    # AUDITOR UI
     def _auditor_status(self) -> str:
         """Return a short status string used in the footer."""
         parts = []
@@ -2107,6 +2193,8 @@ class VimSharkApp:
             parts.append('ARP')
         if self.auditor.port_scan_enabled:
             parts.append('PORT‑SCAN')
+        if getattr(self.auditor, 'host_scan_enabled', True):
+            parts.append('HOST‑SCAN')
         if self.auditor.syn_auditor_enabled:
             parts.append('SYN')
         if self.auditor.icmp_auditor_enabled:
@@ -2117,23 +2205,27 @@ class VimSharkApp:
         """Re‑build the footer text so the toggle status is always visible."""
         base = " [Q]uit [T]heme [P]ause [F]ollow [S]earch Hex [E]xport [V]alidate " \
                "[C]lear [L]Flows [A]uditor [/]Filter"
-        status = f"  Enabled: {self._auditor_status()}"
+        status = f"  Auditors: {self._auditor_status()}"
         self.footer.set_text(base + status)
 
     def show_auditor_modal(self) -> None:
-        """Overlay with check‑boxes for each audit component."""
+        """Overlay with check‑boxes for each audit component (including new Host Scan)."""
         cb_arp   = urwid.CheckBox('ARP Spoof Detector', state=self.auditor.arp_auditor_enabled)
         cb_port  = urwid.CheckBox('Port‑Scan Detector', state=self.auditor.port_scan_enabled)
+        cb_host  = urwid.CheckBox('Host Scan Detector (ICMP + ARP)', 
+                                 state=getattr(self.auditor, 'host_scan_enabled', True))
         cb_syn   = urwid.CheckBox('TCP SYN‑Flood Detector', state=self.auditor.syn_auditor_enabled)
         cb_icmp  = urwid.CheckBox('ICMP Flood Detector', state=self.auditor.icmp_auditor_enabled)
+        
         ok_btn   = urwid.Button('OK')
         cancel   = urwid.Button('Cancel')
 
         def apply(_b):
             self.auditor.arp_auditor_enabled   = cb_arp.get_state()
-            self.auditor.port_scan_enabled      = cb_port.get_state()
-            self.auditor.syn_auditor_enabled    = cb_syn.get_state()
-            self.auditor.icmp_auditor_enabled   = cb_icmp.get_state()
+            self.auditor.port_scan_enabled     = cb_port.get_state()
+            self.auditor.host_scan_enabled     = cb_host.get_state()
+            self.auditor.syn_auditor_enabled   = cb_syn.get_state()
+            self.auditor.icmp_auditor_enabled  = cb_icmp.get_state()
             self._update_footer()
             self._close_overlay()
 
@@ -2141,22 +2233,27 @@ class VimSharkApp:
         urwid.connect_signal(cancel,    'click', self._close_overlay)
 
         pile = urwid.Pile([
-            urwid.Text('--- Security Auditor Settings ---', align='center'),
+            urwid.Text('--- Security Auditor Settings ---', align='center'),
             urwid.Divider(),
-            cb_arp, cb_port, cb_syn, cb_icmp,
+            cb_arp,
+            cb_port,
+            cb_host,
+            cb_syn,
+            cb_icmp,
             urwid.Divider(),
             urwid.Columns([ok_btn, cancel])
         ])
         overlay = urwid.Overlay(
             urwid.LineBox(urwid.Filler(pile), title='Auditor Settings'),
-            self.root.body, 'center', 48, 'middle', 16
+            self.root.body, 'center', 58, 'middle', 18
         )
         self.root.body = overlay
 
     def _close_overlay(self, *_args) -> None:
         self.root.body = urwid.AttrMap(self.body, 'bg')
 
-    # ------------------------------------------------------------- modals (export / hex / validation / flows)
+    # ------------------------------------------------------------- 
+    # modals (export / hex / validation / flows)
     def show_validation_modal(self) -> None:
         edit = urwid.Edit("Target IP: ", "192.168.1.1")
         cb_arp = urwid.CheckBox("Passive ARP Validator", state=self.auditor.arp_auditor_enabled)
@@ -2400,6 +2497,7 @@ class VimSharkApp:
             logger.debug("follow_stream error: %s", e)
 
     # -----------------------------------------------------------------
+    # Init
     def run(self) -> None:
         if not self.read_pcap and os.getuid() != 0:
             print("[!] Live capture requires sudo/root.")
@@ -2425,9 +2523,8 @@ class VimSharkApp:
 
 
 
-# ==============================================================================
-# ENTRY POINT
-# ==============================================================================
+# -----------------------------------------------------------------
+# Entry
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=f"vimShark v{__version__}")
