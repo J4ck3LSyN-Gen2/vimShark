@@ -1,147 +1,149 @@
 # 🦈 vimShark
 
-**Author:** J4ck3LSyN  
-**Version:** 0.2.4
+**Author:** [J4ck3LSyN](https://x.com/J4ck3LSyN)  
+**Version:** 0.2.5
 
 ---
 
-**vimShark** is a high-performance, terminal-based network telemetry analyzer and security auditing tool. Engineered for systems administrators and security researchers, it provides a production-grade TUI (Terminal User Interface) for real-time packet dissection, flow reassembly, and passive threat detection.
+**vimShark** is a high-performance, terminal-based network telemetry analyzer and security auditing tool. Engineered for systems administrators and security researchers, it provides a production-grade TUI (Terminal User Interface) for real-time packet dissection, flow reassembly, and passive + active threat detection.
 
-Built on the high-speed **dpkt** parsing engine and **pcapy-ng** for low-latency capture, vimShark delivers deep packet insights directly in your terminal with support for 24-bit True Color themes.
+Built on the high-speed **dpkt** parsing engine and **pcapy-ng** for low-latency capture, vimShark delivers deep packet insights directly in your terminal with support for rich 24-bit True Color themes.
 
 ## Key Features
 
-*   **Real-Time Telemetry**: Live packet-per-second (pps) and throughput (bps) monitoring with Unicode-block sparkline visualizations.
-*   **Real-Time Security Auditing**: Togglable audits during packet flow to detect different port scan types.
-*   **Deep Packet Dissection**: Structural decoding of Ethernet, IPv4/IPv6, ARP, TCP, UDP, ICMP, DNS, NTP, and more.
-*   **Encrypted Traffic Insight**: SNI extraction, full X.509 certificate parsing, and OCSP stapling detection.
-*   **IP Reassembly**: Native stateful reassembly of fragmented IPv4 traffic.
-*   **Stream Reassembly**: Full-duplex TCP/UDP stream following and payload reconstruction.
-*   **Hex/ASCII Search**: Interactive pattern matching and highlighting within the hex dump viewer.
-*   **Security Auditing**:
-    *   **Passive ARP Spoof Detection**: Monitors MAC-to-IP binding changes against system baselines.
-    *   **Active Validation**: Dispatch targeted ARP probes (via raw sockets or Scapy) to verify disputed network identities.
-    *   **Credential Leak Detection**: Passive scanning for unencrypted sensitive keywords (user, pass, secret, etc.) in raw payloads.
-*   **Advanced Filtering**: Support for complex display filters using logic operators (`&&`, `||`, `==`).
-*   **Persistence**: Read from and write to standard PCAP files for offline forensic analysis.
-*   **Highly Customizable**: 8+ built-in color schemes including Dracula, Nord, Gruvbox, and Cyberpunk.
-
-## Themes
-
-<p align="center">
-  <img src="docs/vsBloody.png" width="45%" />
-  <img src="docs/vsE2.png" width="45%" />
-  <br />
-  <img src="docs/arch.png" width="45%" />
-  <img src="docs/btopClassic.png" width="45%" />
-  <br />
-  <img src="docs/nullsecurityx.png" width="45%" />
-  <img src="docs/cyberpunk.png" width="45%" />
-</p>
+*   **Real-Time Telemetry**: Live packet-per-second (pps) and bandwidth monitoring with Unicode sparkline visualizations.
+*   **Advanced Security Auditing** (toggleable):
+    *   ARP Spoof Detection (MAC-IP binding changes)
+    *   Port Scan Detection (random/excessive + sequential)
+    *   Host Scan Detection (ICMP + ARP sweeps)
+    *   TCP SYN Flood & ICMP Flood Detection
+    *   Credential Leak Detection (Basic Auth, Bearer, passwords, API keys, etc.)
+*   **Deep Packet Dissection**: Ethernet, IPv4/IPv6, ARP, TCP, UDP, ICMP/ICMPv6, DNS, NTP, HTTP, TLS.
+*   **TLS/SSL Intelligence**:
+    *   Full ClientHello/ServerHello parsing
+    *   JA3 & JA3S fingerprinting
+    *   SNI + ALPN extraction
+    *   X.509 certificate parsing (subject, issuer, validity, SAN, fingerprints, OCSP, CRL, expiry checks)
+*   **IP Fragment Reassembly**: Stateful IPv4 reassembly.
+*   **Stream Following**: Full-duplex TCP/UDP stream reassembly and payload viewing.
+*   **Interactive Hex Dump**: With search and highlighting.
+*   **Powerful Filtering**: Complex expressions with `&&`, `||`, field operators (`proto`, `src`, `dst`, `sni`, `ja3`, `cred`, etc.).
+*   **PCAP Support**: Read from and write to standard PCAP files (filtered export supported).
+*   **Highly Customizable**: 8+ built-in themes with true-color support.
 
 ### Prerequisites
 
-vimShark requires Python 3.8+ and administrative privileges to bind to raw sockets.
+- Python 3.8+
+- Root/admin privileges for live capture
+- `libpcap` / `tcpdump` development headers (for pcapy-ng)
+
+### Theme Examples
+<p align="center">
+<img src="docs/vsBloody.png" width="45%" />
+<img src="docs/vsE2.png" width="45%" />
+<br />
+<img src="docs/arch.png" width="45%" />
+<img src="docs/btopClassic.png" width="45%" />
+<br />
+<img src="docs/nullsecurityx.png" width="45%" />
+<img src="docs/cyberpunk.png" width="45%" />
+<br />
+<img src="docs/uwuUndergroundYResearchers.png" width="45%" />
+<img src="docs/vaporNior.png" width="45%" />
+</p>
 
 ## Quick Start
 
-1. **Clone the Repository**
+1. **Clone & Setup**
     ```bash
     git clone https://github.com/J4ck3LSyN-Gen2/vimShark.git
     cd vimShark
-    ```
-
-2. **Create a Virtual Environment**
-    ```bash
     python3 -m venv vsEnviron
-    source vsEnviron/bin/activate    # Use vsEnviron/bin/activate.fish on Fish shell
+    source vsEnviron/bin/activate
     ```
 
-3. **Install Dependencies**
-    > **Note:** Depending on your OS, you may need to install `tcpdump` or `libpcap` (and development headers) for Scapy/pcapy-ng to work correctly with your network hardware.
+2. **Install Dependencies**
     ```bash
     python3 -m pip install --upgrade pip
-    python3 -m pip install urwid 
+    python3 -m pip install urwid
     python3 -m pip install -t . dpkt pcapy-ng
-    # Optional:
-    # pip install cryptography scapy    # for certificate parsing and active probes
+    # Optional but recommended:
+    # python3 -m pip install cryptography scapy
     ```
 
-4. **Run vimShark**
+3. **Run**
     ```bash
-    # Requires root/admin privileges
-    sudo python3 vs.py -i wlan0                  # Replace wlan0 with your interface
-    sudo python3 vs.py -i wlan0 -o cap_wlan0.pcap # Capture to PCAP
-    sudo python3 vs.py -r cap_wlan0.pcap         # Read from PCAP
+    sudo python3 vs025.py -i wlan0                    # Live capture
+    sudo python3 vs025.py -i wlan0 -o capture.pcap    # Capture + save
+    python3 vs025.py -r capture.pcap                  # Offline analysis
     ```
 
-5. **Deactivate Environment** (when done)
-    ```bash
-    deactivate
-    ```
+## Usage Examples
 
-## 🛠 Usage
-
-### Basic Sniffing
 ```bash
-sudo python3 vs.py -i eth0
+# Live capture on specific interface
+sudo python3 vs025.py -i eth0
+
+# With custom theme
+sudo python3 vs025.py -i eth0 --theme cyberpunk
+
+# Read PCAP with buffer size
+python3 vs025.py -r capture.pcap --buffer 10000
+
+# Throttled capture (packets/sec)
+sudo python3 vs025.py -i wlan0 --max-rate 500
 ```
 
-### Offline Analysis
-```bash
-python3 vs.py -r capture.pcap
-```
-
-### Live Export
-```bash
-sudo python3 vs.py -i eth0 -o output.pcap
-```
-
-### Start With a Specific Theme
-```bash
-sudo python3 vs.py -i eth0 --theme cyberpunk
-```
-
-## Interactive Keybindings
+## Interactive Controls
 
 | Key          | Action                                      |
 |--------------|---------------------------------------------|
-| `Q` / `ESC`  | Quit / Close Overlay                        |
-| `T`          | Cycle UI Themes                             |
-| `P`          | Pause/Resume Live Capture                   |
-| `/`          | Focus Filter Bar                            |
-| `S`          | Search Strings Inside Hex Dumps             |
-| `F`          | Follow TCP/UDP Stream (on selected packet)  |
-| `V`          | Trigger Active ARP Validation Probe         |
-| `C`          | Clear Packet Buffer                         |
-| `A`          | Toggle Packet Audits                        |
-| `Enter`      | Inspect Selected Packet                     |
-| `Arrows`     | Navigate Packet List / Hex Dumps            |
+| `Q` / `ESC`  | Quit / Close modal                          |
+| `T`          | Cycle themes                                |
+| `P`          | Pause / Resume capture                      |
+| `/`          | Focus filter bar                            |
+| `S`          | Search in current hex dump                  |
+| `F`          | Follow TCP/UDP stream of selected packet    |
+| `V`          | Security tools (ARP probe, etc.)            |
+| `C`          | Clear buffer                                |
+| `A`          | Auditor settings                            |
+| `L`          | Show top flows                              |
+| `E`          | Export filtered packets to PCAP             |
+| `Enter`      | View packet details                         |
 
-## '/' Display Filters
+## Display Filters
 
-vimShark supports a powerful filtering syntax. Combine fields with `&&` (AND) and `||` (OR).
+Supports field-based queries with logic:
 
-**Example Queries:**
-*   `type == tcp && ip.src == 192.168.1.5`
-*   `type == dns || type == ntp`
-*   `in_data == 414141` (Search for hex pattern in raw payload)
+- `proto == tls && sni == example.com`
+- `ja3 == 1234567890abcdef1234567890abcdef`
+- `cred == yes || proto == http`
+- `src == 192.168.1.100 && port == 443`
 
-## 'T' Supported Themes
+## Themes
 
-*   **nullsecurityx**: Styled after the infosec researcher & bug bounty hunter - [@NullSecurityX](https://x.com/NullSecurityX)
-*   **archu_yuki**: Styled after the ChaosFoundry director - [@Archknight23](https://x.com/Archknight23)
-*   **btop_classic**: High-contrast professional blue
-*   **Dracula**: The classic dark mode favorite
-*   **Nord**: Arctic-inspired clean aesthetic
-*   **Gruvbox**: Retro "groove" dark theme
-*   **Cyberpunk**: High-saturation neon visuals
-*   **Solarized Dark**: Precision-calibrated color palette
+vimShark ships with multiple carefully crafted themes:
+
+- `btop_classic` (default)
+- `y_researchers`
+-    _Credit:_ [@uwu_underground](https://x.com/uwu_underground)
+- `nullsecurityx` 
+-    _Credit:_ [@NullSecurityX](https://x.com/nullsecurityx)    
+- `arch_yuki` 
+-    _Credit:_ [@Archknight23](https://x.com/Archknight23)  
+- `neon_sakura`
+- `vapor_noir`
+- `gruvbox_dark`
+- `dracula`
+- `cyberpunk`
 
 ## Security Disclaimer
 
-This tool is intended for authorized network monitoring and security auditing only. Using vimShark for unauthorized interception of traffic on networks you do not own or have explicit permission to audit is illegal and unethical. The authors assume no liability for misuse of this software.
+vimShark is intended for **authorized** network monitoring and security research only. Unauthorized use on networks you do not own or have explicit permission to monitor is illegal. The author assumes no liability for misuse.
 
-## License
+---
 
-Distributed under the MIT License. See `LICENSE` for more information.
+<p align="center">
+  <strong>Built with ❤️ by <a href="https://github.com/J4ck3LSyN-Gen2">J4ck3LSyN</a> | Chaos Foundry Security Division</strong><br>
+  <sub>MIT License | Copyright © 2026</sub>
+</p>
