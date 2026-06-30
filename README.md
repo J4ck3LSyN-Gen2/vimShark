@@ -73,25 +73,25 @@ Built on the high-speed **dpkt** parsing engine and **pcapy-ng** for low-latency
 
 3. **Run**
     ```bash
-    sudo python3 vs025.py -i wlan0                    # Live capture
-    sudo python3 vs025.py -i wlan0 -o capture.pcap    # Capture + save
-    python3 vs025.py -r capture.pcap                  # Offline analysis
+    sudo python3 vs.py -i wlan0                    # Live capture
+    sudo python3 vs.py -i wlan0 -o capture.pcap    # Capture + save
+    python3 vs.py -r capture.pcap                  # Offline analysis
     ```
 
 ## Usage Examples
 
 ```bash
 # Live capture on specific interface
-sudo python3 vs025.py -i eth0
+sudo python3 vs.py -i eth0
 
 # With custom theme
-sudo python3 vs025.py -i eth0 --theme cyberpunk
+sudo python3 vs.py -i eth0 --theme cyberpunk
 
 # Read PCAP with buffer size
-python3 vs025.py -r capture.pcap --buffer 10000
+python3 vs.py -r capture.pcap --buffer 10000
 
 # Throttled capture (packets/sec)
-sudo python3 vs025.py -i wlan0 --max-rate 500
+sudo python3 vs.py -i wlan0 --max-rate 500
 ```
 
 ## Interactive Controls
